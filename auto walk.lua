@@ -1,5 +1,5 @@
 -- ✅ Load core WindUI (pakai path repo kamu sendiri)
-local WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/WannBot/WindUI/main/src/init.lua"))()
+local WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/WannBot/WindUI/refs/heads/main/src/init.lua"))()
 
 -- ✅ Services
 local Players = game:GetService("Players")
