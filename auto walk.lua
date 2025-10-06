@@ -1,9 +1,10 @@
--- ✅ Gunakan main.lua, bukan src/init.lua
-local WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/WannBot/WindUI/refs/heads/main/main.lua"))()
+-- // Auto Walk.lua - WindUI version by WannBot
+-- pastikan file ini ada di repo kamu (https://github.com/WannBot/WindUI/blob/main/auto%20walk.lua)
 
--- (lanjutkan isi UI-mu di bawah ini seperti versi sebelumnya)
+-- ✅ Ambil core WindUI dari folder src (punyamu sendiri)
+local WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/WannBot/WindUI/refs/heads/main/src/init.lua"))()
 
--- ✅ Services
+-- ✅ Roblox services
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
@@ -18,14 +19,16 @@ local walkEnabled, jumpEnabled, noclipEnabled = false, false, false
 local walkSpeedValue, jumpPowerValue = 16, 50
 local playAll, autoWalkActive = false, false
 
--- ✅ Utility
-local function applyWalk()
+----------------------------------------------------
+-- 🧩 UTILITIES
+----------------------------------------------------
+local function applyWalkSpeed()
 	if hum then
 		hum.WalkSpeed = walkEnabled and walkSpeedValue or 16
 	end
 end
 
-local function applyJump()
+local function applyJumpPower()
 	if hum then
 		hum.JumpPower = jumpEnabled and jumpPowerValue or 50
 	end
@@ -40,21 +43,21 @@ local function playPathFile(filename)
 		warn("❌ File tidak ditemukan:", filename)
 		return
 	end
-	local json = readfile(filename .. ".json")
-	local data = HttpService:JSONDecode(json)
-	autoWalkActive = true
-	print("[AutoWalk] Playing:", filename)
 
-	for _, pos in ipairs(data) do
+	local data = HttpService:JSONDecode(readfile(filename .. ".json"))
+	print("[AutoWalk] Memainkan jalur:", filename)
+	autoWalkActive = true
+
+	for _, p in ipairs(data) do
 		if not autoWalkActive then break end
-		hum:MoveTo(Vector3.new(pos.X, pos.Y, pos.Z))
+		local pos = Vector3.new(p.X, p.Y, p.Z)
+		hum:MoveTo(pos)
 		hum.MoveToFinished:Wait()
 	end
 
 	autoWalkActive = false
 end
 
--- ✅ Noclip
 RunService.Stepped:Connect(function()
 	if noclipEnabled and player.Character then
 		for _, part in ipairs(player.Character:GetDescendants()) do
@@ -66,7 +69,7 @@ RunService.Stepped:Connect(function()
 end)
 
 ----------------------------------------------------
--- 🪟 WINDOW SETUP
+-- 🪟 CREATE WINDOW
 ----------------------------------------------------
 local Window = WindUI:CreateWindow({
 	Name = "Antartika Path Controller",
@@ -85,7 +88,7 @@ TabMain:CreateDropdown({
 	CurrentOption = {"16"},
 	Callback = function(opt)
 		walkSpeedValue = tonumber(opt[1])
-		applyWalk()
+		applyWalkSpeed()
 	end
 })
 TabMain:CreateToggle({
@@ -93,7 +96,7 @@ TabMain:CreateToggle({
 	CurrentValue = false,
 	Callback = function(state)
 		walkEnabled = state
-		applyWalk()
+		applyWalkSpeed()
 	end
 })
 
@@ -104,7 +107,7 @@ TabMain:CreateDropdown({
 	CurrentOption = {"50"},
 	Callback = function(opt)
 		jumpPowerValue = tonumber(opt[1])
-		applyJump()
+		applyJumpPower()
 	end
 })
 TabMain:CreateToggle({
@@ -112,7 +115,7 @@ TabMain:CreateToggle({
 	CurrentValue = false,
 	Callback = function(state)
 		jumpEnabled = state
-		applyJump()
+		applyJumpPower()
 	end
 })
 
@@ -129,11 +132,10 @@ TabMain:CreateToggle({
 -- 🧭 TAB 2: AUTO WALK
 ----------------------------------------------------
 local TabAuto = Window:CreateTab("Auto Walk")
-
 TabAuto:CreateLabel("🗺️ MAP ANTARTIKA")
 
 TabAuto:CreateToggle({
-	Name = "PLAY ALL (Path1 → Path4)",
+	Name = "PLAY ALL (Path 1 → 4)",
 	CurrentValue = false,
 	Callback = function(state)
 		playAll = state
@@ -195,7 +197,7 @@ TabAuto:CreateToggle({
 ----------------------------------------------------
 local TabSetting = Window:CreateTab("Setting")
 
-TabSetting:CreateLabel("🎨 Pilih Tema")
+TabSetting:CreateLabel("🎨 Tema Wind UI")
 TabSetting:CreateDropdown({
 	Name = "Select Theme",
 	Options = {"Dark","Light","Ocean","Emerald","Crimson"},
