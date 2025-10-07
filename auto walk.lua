@@ -55,41 +55,44 @@ local function stopPath()
 end
 
 local function playPathFile(filename)
-	local url = "https://raw.githubusercontent.com/WannBot/<WindUI/refs/heads/main/" .. filename .. ".json"
+    -- ✅ URL dasar repo kamu
+    local baseURL = "https://raw.githubusercontent.com/WannBot/WindUI/refs/heads/main/"
+    local url = baseURL .. filename .. ".json"
 
-	-- Contoh:
-	-- local url = "https://raw.githubusercontent.com/WannBot/WindUI/refs/heads/main/Path1.json"
+    print("[AutoWalk] Mengambil:", url)
 
-	print("[AutoWalk] Downloading:", url)
-	local success, result = pcall(function()
-		return game:HttpGet(url)
-	end)
+    local success, result = pcall(function()
+        return game:HttpGet(url)
+    end)
 
-	if not success then
-		warn("❌ Tidak bisa ambil file:", filename, result)
-		return
-	end
+    if not success or not result then
+        warn("❌ Gagal ambil file:", filename)
+        return
+    end
 
-	local successDecode, data = pcall(function()
-		return HttpService:JSONDecode(result)
-	end)
+    local successDecode, data = pcall(function()
+        return HttpService:JSONDecode(result)
+    end)
 
-	if not successDecode or typeof(data) ~= "table" then
-		warn("❌ Format JSON tidak valid di:", filename)
-		return
-	end
+    if not successDecode or typeof(data) ~= "table" then
+        warn("❌ Format JSON tidak valid di:", filename)
+        return
+    end
 
-	autoWalkActive = true
-	print("[AutoWalk] Playing:", filename)
+    autoWalkActive = true
+    print("[AutoWalk] Playing path:", filename, "Total titik:", #data)
 
-	for _, pos in ipairs(data) do
-		if not autoWalkActive then break end
-		hum:MoveTo(Vector3.new(pos.X, pos.Y, pos.Z))
-		hum.MoveToFinished:Wait()
-	end
+    for i, pos in ipairs(data) do
+        if not autoWalkActive then break end
+        local target = Vector3.new(pos.X, pos.Y, pos.Z)
+        hum:MoveTo(target)
+        local reached = hum.MoveToFinished:Wait()
+        if not reached then task.wait(0.2) end
+        print(string.format("[Step %d/%d] Moved to (%.1f, %.1f, %.1f)", i, #data, pos.X, pos.Y, pos.Z))
+    end
 
-	autoWalkActive = false
-	print("[AutoWalk] Selesai:", filename)
+    autoWalkActive = false
+    print("[AutoWalk] Selesai path:", filename)
 end
 
 -- ✅ Noclip loop
