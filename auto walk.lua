@@ -1,240 +1,262 @@
--- ✅ Load Obsidian (Linoria-based)
-local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
-local Library = loadstring(game:HttpGet(repo .. "Library.lua"))()
-local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
-local SaveManager = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+-- 🧠 AUTO WALK V3 (Full GUI)
+-- Kombinasi versi lama + tambahan tombol Load/Play/Save/All
+-- Tetap pakai sistem MoveTo (bukan tween)
+-- Dibuat untuk executor Android (Fluxus/Codex/Deltax dsb.)
 
--- ✅ Services
 local Players = game:GetService("Players")
-local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
-
+local HttpService = game:GetService("HttpService")
 local player = Players.LocalPlayer
+local mouse = player:GetMouse()
+
 local character = player.Character or player.CharacterAdded:Wait()
-local hum = character:WaitForChild("Humanoid")
+local humanoid = character:WaitForChild("Humanoid")
+local hrp = character:WaitForChild("HumanoidRootPart")
 
--- 🔁 Auto update Humanoid saat respawn
-player.CharacterAdded:Connect(function(char)
-	character = char
-	hum = char:WaitForChild("Humanoid")
-	task.wait(0.5)
-	if walkEnabled then hum.WalkSpeed = walkSpeedValue end
-	if jumpEnabled then hum.JumpPower = jumpPowerValue end
+local recording = false
+local replaying = false
+local shouldStopReplay = false
+local platforms = {}
+local pathData = {}
+
+-----------------------------------------------------------
+-- 🪟 GUI SETUP
+-----------------------------------------------------------
+local screenGui = Instance.new("ScreenGui")
+screenGui.Parent = player.PlayerGui
+screenGui.ResetOnSpawn = false
+screenGui.Name = "AutoWalkGuiV3"
+
+local frame = Instance.new("Frame")
+frame.Parent = screenGui
+frame.BackgroundColor3 = Color3.fromRGB(210, 230, 255)
+frame.Size = UDim2.new(0, 300, 0, 340)
+frame.Position = UDim2.new(0, 40, 0.5, -170)
+frame.Active = true
+frame.Draggable = true
+
+local title = Instance.new("TextLabel")
+title.Parent = frame
+title.BackgroundColor3 = Color3.fromRGB(70, 120, 200)
+title.Size = UDim2.new(1, 0, 0, 28)
+title.TextColor3 = Color3.new(1, 1, 1)
+title.Text = "Auto Walk Controller V3"
+title.Font = Enum.Font.SourceSansBold
+title.TextScaled = true
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Parent = frame
+statusLabel.BackgroundTransparency = 1
+statusLabel.Position = UDim2.new(0, 0, 0, 28)
+statusLabel.Size = UDim2.new(1, 0, 0, 25)
+statusLabel.Text = "Status: Idle"
+statusLabel.TextColor3 = Color3.new(0, 0, 0)
+statusLabel.Font = Enum.Font.SourceSans
+statusLabel.TextScaled = true
+
+local function setStatus(txt, color)
+	statusLabel.Text = "Status: " .. txt
+	if color then statusLabel.TextColor3 = color end
+end
+
+-----------------------------------------------------------
+-- 🔘 BUTTON CREATOR
+-----------------------------------------------------------
+local function makeButton(name, text, order, color)
+	local btn = Instance.new("TextButton")
+	btn.Parent = frame
+	btn.Name = name
+	btn.Text = text
+	btn.Size = UDim2.new(0, 260, 0, 28)
+	btn.Position = UDim2.new(0, 20, 0, 60 + (order * 30))
+	btn.BackgroundColor3 = color or Color3.fromRGB(150, 180, 255)
+	btn.TextScaled = true
+	btn.Font = Enum.Font.SourceSansBold
+	return btn
+end
+
+local recordBtn = makeButton("Record", "🎬 Start Record", 0, Color3.fromRGB(255, 180, 120))
+local stopRecordBtn = makeButton("StopRecord", "⏹ Stop Record", 1, Color3.fromRGB(255, 120, 120))
+local playBtn = makeButton("PlayPath", "▶️ Play Recorded Path", 2, Color3.fromRGB(160, 255, 160))
+local stopReplayBtn = makeButton("StopReplay", "⛔ Stop Replay", 3, Color3.fromRGB(255, 160, 160))
+local saveBtn = makeButton("Save", "💾 Save Path", 4, Color3.fromRGB(150, 200, 255))
+local loadBtn = makeButton("Load", "📂 Load JSON URL", 5, Color3.fromRGB(150, 255, 150))
+local playLoadedBtn = makeButton("PlayLoaded", "▶️ Play Loaded Path", 6, Color3.fromRGB(180, 255, 180))
+local playAllBtn = makeButton("PlayAll", "🌎 Play All (Path1→Path5)", 7, Color3.fromRGB(255, 240, 150))
+local clearBtn = makeButton("Clear", "🧹 Clear Platforms", 8, Color3.fromRGB(210, 210, 255))
+
+-----------------------------------------------------------
+-- 💾 INPUT FIELD UNTUK LOAD JSON
+-----------------------------------------------------------
+local urlBox = Instance.new("TextBox")
+urlBox.Parent = frame
+urlBox.Size = UDim2.new(0, 260, 0, 25)
+urlBox.Position = UDim2.new(0, 20, 0, 340 - 60)
+urlBox.Text = "https://raw.githubusercontent.com/WannBot/WindUI/refs/heads/main/Path1.json"
+urlBox.PlaceholderText = "Masukkan URL JSON di sini..."
+urlBox.TextColor3 = Color3.new(0, 0, 0)
+urlBox.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+urlBox.ClearTextOnFocus = false
+urlBox.TextScaled = true
+urlBox.Font = Enum.Font.SourceSansBold
+
+-----------------------------------------------------------
+-- 🧱 PLATFORM SYSTEM
+-----------------------------------------------------------
+local function clearPlatforms()
+	for _, p in ipairs(platforms) do
+		if p and p.Parent then p:Destroy() end
+	end
+	table.clear(platforms)
+	table.clear(pathData)
+end
+
+local function addPlatform(pos, color)
+	local part = Instance.new("Part")
+	part.Anchored = true
+	part.CanCollide = false
+	part.Material = Enum.Material.Neon
+	part.Color = color or Color3.fromRGB(255, 170, 70)
+	part.Size = Vector3.new(1, 1, 1)
+	part.Shape = Enum.PartType.Ball
+	part.Position = pos
+	part.Name = "PathPoint"
+	part.Parent = workspace
+	table.insert(platforms, part)
+end
+
+-----------------------------------------------------------
+-- 🧭 RECORDING SYSTEM
+-----------------------------------------------------------
+local conn
+recordBtn.MouseButton1Click:Connect(function()
+	if recording then return end
+	recording = true
+	setStatus("Recording...", Color3.fromRGB(255,140,0))
+	clearPlatforms()
+	pathData = {}
+	conn = mouse.Button1Down:Connect(function()
+		if not recording then return end
+		local target = mouse.Hit and mouse.Hit.p
+		if target then
+			local point = {X = target.X, Y = target.Y, Z = target.Z}
+			table.insert(pathData, point)
+			addPlatform(Vector3.new(target.X, target.Y, target.Z))
+		end
+	end)
 end)
 
--- ✅ State
-local walkEnabled, jumpEnabled, noclipEnabled = false, false, false
-local walkSpeedValue, jumpPowerValue = 16, 50
-local playAll, autoWalkActive = false, false
+stopRecordBtn.MouseButton1Click:Connect(function()
+	if not recording then return end
+	recording = false
+	if conn then conn:Disconnect() conn = nil end
+	setStatus("Recording stopped", Color3.fromRGB(0,255,0))
+end)
 
-----------------------------------------------------
--- ⚙️ Utility
-----------------------------------------------------
-local function applyWalk()
-	if hum and hum.Parent then
-		hum.WalkSpeed = walkEnabled and walkSpeedValue or 16
+-----------------------------------------------------------
+-- ▶️ REPLAY PATH
+-----------------------------------------------------------
+local function replay(data)
+	if replaying or #data == 0 then return end
+	replaying = true
+	shouldStopReplay = false
+	setStatus("Replaying path...", Color3.fromRGB(0,180,0))
+
+	for i, pos in ipairs(data) do
+		if shouldStopReplay then break end
+		humanoid:MoveTo(Vector3.new(pos.X, pos.Y, pos.Z))
+		humanoid.MoveToFinished:Wait()
+		task.wait(0.1)
 	end
+
+	replaying = false
+	setStatus("Replay finished", Color3.fromRGB(0,255,0))
 end
 
-local function applyJump()
-	if hum and hum.Parent then
-		-- Pastikan karakter pakai JumpPower mode
-		if hum:FindFirstChild("UseJumpPower") then
-			hum.UseJumpPower = true
-			hum.JumpPower = jumpEnabled and jumpPowerValue or 50
-		else
-			-- Fallback: kalau pakai JumpHeight
-			local baseHeight = 7.2 -- default jump height kira-kira 50 JumpPower
-			hum.JumpHeight = jumpEnabled and (jumpPowerValue / 7) or baseHeight
-		end
+playBtn.MouseButton1Click:Connect(function()
+	replay(pathData)
+end)
+
+stopReplayBtn.MouseButton1Click:Connect(function()
+	shouldStopReplay = true
+	replaying = false
+	setStatus("Stopped", Color3.fromRGB(255,255,0))
+end)
+
+-----------------------------------------------------------
+-- 💾 SAVE / LOAD JSON
+-----------------------------------------------------------
+saveBtn.MouseButton1Click:Connect(function()
+	if #pathData == 0 then
+		setStatus("No path to save", Color3.fromRGB(255,0,0))
+		return
 	end
-end
-
-local function stopPath()
-	autoWalkActive = false
-end
-
-local function playPathFile(filename)
-    -- ✅ URL dasar repo kamu
-    local baseURL = "https://raw.githubusercontent.com/WannBot/WindUI/refs/heads/main/"
-    local url = baseURL .. filename .. ".json"
-
-    print("[AutoWalk] Mengambil:", url)
-
-    local success, result = pcall(function()
-        return game:HttpGet(url)
-    end)
-
-    if not success or not result then
-        warn("❌ Gagal ambil file:", filename)
-        return
-    end
-
-    local successDecode, data = pcall(function()
-        return HttpService:JSONDecode(result)
-    end)
-
-    if not successDecode or typeof(data) ~= "table" then
-        warn("❌ Format JSON tidak valid di:", filename)
-        return
-    end
-
-    autoWalkActive = true
-    print("[AutoWalk] Playing path:", filename, "Total titik:", #data)
-
-    for i, pos in ipairs(data) do
-        if not autoWalkActive then break end
-        local target = Vector3.new(pos.X, pos.Y, pos.Z)
-        hum:MoveTo(target)
-        local reached = hum.MoveToFinished:Wait()
-        if not reached then task.wait(0.2) end
-        print(string.format("[Step %d/%d] Moved to (%.1f, %.1f, %.1f)", i, #data, pos.X, pos.Y, pos.Z))
-    end
-
-    autoWalkActive = false
-    print("[AutoWalk] Selesai path:", filename)
-end
-
--- ✅ Noclip loop
-RunService.Stepped:Connect(function()
-	if noclipEnabled and player.Character then
-		for _, part in ipairs(player.Character:GetDescendants()) do
-			if part:IsA("BasePart") then
-				part.CanCollide = false
-			end
-		end
+	local json = HttpService:JSONEncode(pathData)
+	if writefile then
+		writefile("AutoWalk_Path.json", json)
+		setStatus("Saved to AutoWalk_Path.json", Color3.fromRGB(0,255,0))
+	end
+	if setclipboard then
+		setclipboard(json)
+		setStatus("Copied to clipboard", Color3.fromRGB(0,255,0))
 	end
 end)
 
--- ✅ Window
-local Window = Library:CreateWindow({
-	Title = "WS",
-	Footer = "Antartika Path Controller",
-	Icon = 95816097006870,
-	NotifySide = "Right",
-	ShowCustomCursor = true,
-})
+loadBtn.MouseButton1Click:Connect(function()
+	local url = urlBox.Text
+	setStatus("Loading from URL...", Color3.fromRGB(0,120,255))
+	local ok, res = pcall(function() return game:HttpGet(url) end)
+	if not ok or not res or #res == 0 then
+		setStatus("Failed to load", Color3.fromRGB(255,0,0))
+		return
+	end
+	local ok2, data = pcall(function() return HttpService:JSONDecode(res) end)
+	if not ok2 or typeof(data) ~= "table" then
+		setStatus("Invalid JSON", Color3.fromRGB(255,0,0))
+		return
+	end
+	clearPlatforms()
+	for _, p in ipairs(data) do
+		addPlatform(Vector3.new(p.X, p.Y, p.Z))
+	end
+	pathData = data
+	setStatus("Loaded "..#data.." points", Color3.fromRGB(0,255,0))
+end)
 
--- ✅ Tabs
-local Tabs = {
-	Main = Window:AddTab("Main Fiture", "user"),
-	Auto = Window:AddTab("Auto Walk", "move"),
-	Setting = Window:AddTab("Setting", "settings"),
-}
+playLoadedBtn.MouseButton1Click:Connect(function()
+	replay(pathData)
+end)
 
-----------------------------------------------------
--- 🟢 MAIN FITURE
-----------------------------------------------------
-local MainBox = Tabs.Main:AddLeftGroupbox("Movement Control")
-
-MainBox:AddToggle("WalkspeedToggle", {
-	Text = "WalkSpeed ON/OFF",
-	Default = false,
-	Callback = function(v)
-		walkEnabled = v
-		applyWalk()
-	end,
-})
-
-MainBox:AddSlider("WalkspeedValue", {
-	Text = "Speed",
-	Default = 16,
-	Min = 10,
-	Max = 100,
-	Rounding = 0,
-	Callback = function(v)
-		walkSpeedValue = v
-		if walkEnabled then applyWalk() end
-	end,
-})
-
-MainBox:AddToggle("JumpToggle", {
-	Text = "JumpPower ON/OFF",
-	Default = false,
-	Callback = function(v)
-		jumpEnabled = v
-		applyJump()
-	end,
-})
-
-MainBox:AddSlider("JumpPowerValue", {
-	Text = "JumpPower",
-	Default = 50,
-	Min = 25,
-	Max = 200,
-	Rounding = 0,
-	Callback = function(v)
-		jumpPowerValue = v
-		if jumpEnabled then applyJump() end
-	end,
-})
-
-MainBox:AddToggle("NoClip", {
-	Text = "NoClip ON/OFF",
-	Default = false,
-	Callback = function(v)
-		noclipEnabled = v
-	end,
-})
-
-----------------------------------------------------
--- 🧭 AUTO WALK
-----------------------------------------------------
-local AutoBox = Tabs.Auto:AddLeftGroupbox("MAP ANTARTIKA")
-
-AutoBox:AddToggle("PlayAll", {
-	Text = "PLAY ALL (Path 1→4)",
-	Default = false,
-	Callback = function(state)
-		playAll = state
-		if state then
-			task.spawn(function()
-				for i = 1, 4 do
-					playPathFile("Path" .. i)
-					if not playAll then break end
+-----------------------------------------------------------
+-- 🌎 PLAY ALL (Path1→Path5)
+-----------------------------------------------------------
+playAllBtn.MouseButton1Click:Connect(function()
+	task.spawn(function()
+		for i = 1, 5 do
+			local url = ("https://raw.githubusercontent.com/WannBot/WindUI/refs/heads/main/Path%d.json"):format(i)
+			local ok, res = pcall(function() return game:HttpGet(url) end)
+			if ok and res and #res > 0 then
+				local ok2, data = pcall(function() return HttpService:JSONDecode(res) end)
+				if ok2 then
+					clearPlatforms()
+					for _, p in ipairs(data) do
+						addPlatform(Vector3.new(p.X, p.Y, p.Z))
+					end
+					pathData = data
+					setStatus("Playing Path"..i, Color3.fromRGB(0,255,255))
+					replay(data)
 				end
-				playAll = false
-			end)
-		else
-			stopPath()
+			end
+			if shouldStopReplay then break end
+			task.wait(0.5)
 		end
-	end,
-})
+		setStatus("Finished All", Color3.fromRGB(0,255,0))
+	end)
+end)
 
-for i, name in ipairs({
-	"BC > CP1 (Path1)",
-	"CP1 > CP2 (Path2)",
-	"CP2 > CP3 (Path3)",
-	"CP3 > CP4 (Path4)",
-	"CP4 > FINISH (Path5)",
-}) do
-	AutoBox:AddToggle("Path" .. i, {
-		Text = name,
-		Default = false,
-		Callback = function(s) if s then playPathFile("Path" .. i) else stopPath() end end,
-	})
-end
+clearBtn.MouseButton1Click:Connect(function()
+	clearPlatforms()
+	setStatus("Cleared all", Color3.fromRGB(100,100,255))
+end)
 
-----------------------------------------------------
--- ⚙️ SETTINGS
-----------------------------------------------------
-local SettingBox = Tabs.Setting:AddLeftGroupbox("Theme")
-
-SettingBox:AddDropdown("Theme", {
-	Values = { "Dark", "Light", "Aqua", "Midnight" },
-	Default = "Dark",
-	Text = "Select Theme",
-	Callback = function(opt)
-		Window:SetTheme(opt)
-	end,
-})
-
--- ✅ Theme/Save Manager setup
-ThemeManager:SetLibrary(Library)
-SaveManager:SetLibrary(Library)
-ThemeManager:SetFolder("WS")
-SaveManager:SetFolder("WS/config")
-SaveManager:BuildConfigSection(Tabs.Setting)
-ThemeManager:ApplyToTab(Tabs.Setting)
-
-Library.ToggleKeybind = Enum.KeyCode.RightShift
+setStatus("Idle", Color3.fromRGB(0,0,0))
