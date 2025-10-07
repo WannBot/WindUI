@@ -1,20 +1,20 @@
--- WS Auto Walk Controller (FINAL)
+-- WS Auto Walk Controller (FINAL - platform kotak, smooth replay)
 -- UI: Obsidian (deividcomsono / Linoria-based)
--- Fitur: 100% mengikuti struktur "auto walk 1" (Record/Stop/Play/Save/Load)
--- Jalur gerak: sistem lama (Humanoid:MoveTo antar titik)
+-- Fitur: Record/Stop/Undo/Clear/Play/Save/Load (struktur "auto walk 1")
+-- Visual: platform kotak (red/yellow/loaded), tanpa label; Replay: skip titik rapat
 -- by WannBot x ChatGPT
 
-----------------------------------------------------
--- LOAD UI LIBRARIES
-----------------------------------------------------
+----------------------------------------------------------------
+-- LOAD LIB
+----------------------------------------------------------------
 local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
 local Library      = loadstring(game:HttpGet(repo .. "Library.lua"))()
 local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
 local SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
 
-----------------------------------------------------
--- SERVICES & INITIALS
-----------------------------------------------------
+----------------------------------------------------------------
+-- SERVICES
+----------------------------------------------------------------
 local Players      = game:GetService("Players")
 local RunService   = game:GetService("RunService")
 local HttpService  = game:GetService("HttpService")
@@ -35,9 +35,9 @@ player.CharacterAdded:Connect(function(char)
 	if _G.__WS_jumpEnabled then hum.UseJumpPower = true; hum.JumpPower = _G.__WS_jumpPowerValue or 50 end
 end)
 
-----------------------------------------------------
--- STATES (MOVEMENT)
-----------------------------------------------------
+----------------------------------------------------------------
+-- MOVEMENT SETTINGS
+----------------------------------------------------------------
 _G.__WS_walkEnabled     = false
 _G.__WS_jumpEnabled     = false
 _G.__WS_noclipEnabled   = false
@@ -61,71 +61,52 @@ end
 local function applyJump()
 	if hum and hum.Parent then
 		hum.UseJumpPower = true
-		hum.JumpPower = _G.__WS_jumpEnabled and _G.__WS_jumpPowerValue or 50
+		hum.JumpPower   = _G.__WS_jumpEnabled and _G.__WS_jumpPowerValue or 50
 	end
 end
 
-----------------------------------------------------
--- DATA STRUKTUR (mengikuti "auto walk 1")
-----------------------------------------------------
--- Format penyimpanan:
--- {
---   redPlatforms    = { { position={X,Y,Z}, movements={ {position={X,Y,Z}, orientation={X,Y,Z}}, ... } }, ... },
---   yellowPlatforms = { { position={X,Y,Z} }, ... },
---   mappings        = {}  -- opsional (sesuai script lama, tidak digunakan saat replay dasar)
--- }
+----------------------------------------------------------------
+-- DATA (sesuai script "auto walk 1")
+----------------------------------------------------------------
+-- object:
+-- { redPlatforms=[{position, movements=[{position,orientation}]}...],
+--   yellowPlatforms=[{position}...], mappings=[] }
 
--- buffer rekaman satu segmen (dari red ke yellow)
-local currentMovements = {}      -- array of { position={X,Y,Z}, orientation={X,Y,Z} }
-local currentRedPosition = nil   -- {X,Y,Z}
-local lastYellowPosition = nil   -- Vector3 (untuk auto-continue)
+-- record buffer (satu segmen)
+local currentMovements    = {}       -- { {position={X,Y,Z}, orientation={X,Y,Z}}, ... }
+local currentRedPosition  = nil      -- {X,Y,Z}
+local lastYellowPosition  = nil      -- Vector3 untuk auto-continue
 
--- keseluruhan hasil rekaman multi-segmen
-local redPlatforms    = {}       -- array segmen: { position=redPos, movements=currentMovements }
-local yellowPlatforms = {}       -- array end points: { position=yellowPos }
-local mappings        = {}       -- opsional
+-- semua segmen hasil record
+local redPlatforms        = {}
+local yellowPlatforms     = {}
+local mappings            = {}
 
--- LOADED (hasil load dari JSON)
-local loadedObject    = nil      -- object json full (dengan red/yellow)
-local loadedPoints    = {}       -- flatten positions untuk visual/play cepat
+-- LOADED dari JSON
+local loadedObject        = nil
+local loadedPoints        = {}       -- flattened points utk replay cepat
 
 -- flags
-local recording       = false
-local replaying       = false
-local shouldStop      = false
+local recording           = false
+local replaying           = false
+local shouldStop          = false
 
-----------------------------------------------------
--- UTIL VISUAL
-----------------------------------------------------
-local recordedParts   = {}   -- titik visual untuk recorded (merah)
-local loadedParts     = {}   -- titik visual untuk loaded (kuning)
+----------------------------------------------------------------
+-- VISUAL (platform kotak NEON, tanpa text)
+----------------------------------------------------------------
+local recordedParts   = {}   -- visual untuk recorded (red/yellow + sampling moves)
+local loadedParts     = {}   -- visual untuk loaded
 
-local function makeBall(pos: Vector3, color: Color3, name: string)
+local function makePlatform(pos: Vector3, color: Color3, size: Vector3, name: string)
 	local p = Instance.new("Part")
 	p.Name = name
 	p.Anchored = true
 	p.CanCollide = false
 	p.Material = Enum.Material.Neon
-	p.Shape = Enum.PartType.Ball
-	p.Size = Vector3.new(0.9, 0.9, 0.9)
+	p.Size = size
 	p.Color = color
-	p.Position = pos
+	p.CFrame = CFrame.new(pos)
 	p.Parent = workspace
-
-	local bb = Instance.new("BillboardGui")
-	bb.Size = UDim2.fromOffset(40, 16)
-	bb.AlwaysOnTop = true
-	bb.StudsOffset = Vector3.new(0, 1.2, 0)
-	bb.Parent = p
-	local tl = Instance.new("TextLabel")
-	tl.BackgroundTransparency = 1
-	tl.Size = UDim2.fromScale(1,1)
-	tl.TextColor3 = Color3.new(1,1,1)
-	tl.TextScaled = true
-	tl.Font = Enum.Font.Code
-	tl.Text = name
-	tl.Parent = bb
-
 	return p
 end
 
@@ -136,59 +117,91 @@ local function clearParts(listTbl)
 	table.clear(listTbl)
 end
 
-local function visualizeRecorded()
-	clearParts(recordedParts)
-	-- red = start each segment
-	for i, seg in ipairs(redPlatforms) do
-		local rp = seg.position
-		local pos = Vector3.new(rp.X, rp.Y, rp.Z)
-		table.insert(recordedParts, makeBall(pos, Color3.fromRGB(255,80,80), "RED_"..i))
-		-- movements points (optional visual): kecil or beda warna
-		for j, mv in ipairs(seg.movements or {}) do
-			local p = Vector3.new(mv.position.X, mv.position.Y, mv.position.Z)
-			table.insert(recordedParts, makeBall(p, Color3.fromRGB(255,120,120), ("M%d.%d"):format(i,j)))
+-- sampling visual untuk movements supaya tidak spam ribuan part
+local function samplePoints(points, minStep, minDist)
+	local out = {}
+	local last
+	local step = math.max(minStep or 1, 1)
+	for i = 1, #points, step do
+		local p = points[i]
+		if not last or (Vector3.new(p.X,p.Y,p.Z) - last).Magnitude >= (minDist or 6) then
+			table.insert(out, p)
+			last = Vector3.new(p.X,p.Y,p.Z)
 		end
 	end
-	-- yellow = end each segment
+	-- pastikan titik terakhir ikut
+	if #points > 0 then
+		local tail = points[#points]
+		if not last or (Vector3.new(tail.X,tail.Y,tail.Z) - last).Magnitude >= 0.01 then
+			table.insert(out, tail)
+		end
+	end
+	return out
+end
+
+local function visualizeRecorded()
+	clearParts(recordedParts)
+
+	-- red start for each segment
+	for i, seg in ipairs(redPlatforms) do
+		local rp = seg.position
+		table.insert(recordedParts, makePlatform(Vector3.new(rp.X,rp.Y,rp.Z), Color3.fromRGB(255,60,60), Vector3.new(2,0.2,2), "RED_"..i))
+
+		-- OPTIONAL: sampling kecil untuk movements biar kelihatan garis halus (tanpa label)
+		local moves = {}
+		for _, mv in ipairs(seg.movements or {}) do
+			if mv.position then table.insert(moves, mv.position) end
+		end
+		moves = samplePoints(moves, 5, 8)
+		for _, p in ipairs(moves) do
+			table.insert(recordedParts, makePlatform(Vector3.new(p.X,p.Y,p.Z), Color3.fromRGB(255,120,120), Vector3.new(1,0.15,1), "RM"))
+		end
+	end
+
+	-- yellow end for each segment
 	for i, yp in ipairs(yellowPlatforms) do
-		local pos = Vector3.new(yp.position.X, yp.position.Y, yp.position.Z)
-		table.insert(recordedParts, makeBall(pos, Color3.fromRGB(255,230,100), "YEL_"..i))
+		local p = yp.position
+		table.insert(recordedParts, makePlatform(Vector3.new(p.X,p.Y,p.Z), Color3.fromRGB(255,220,80), Vector3.new(2.2,0.2,2.2), "YEL_"..i))
 	end
 end
 
 local function visualizeLoaded()
 	clearParts(loadedParts)
-	-- tampilkan seluruh titik movements dari semua redPlatforms loaded
+
 	if loadedObject and loadedObject.redPlatforms then
 		for i, seg in ipairs(loadedObject.redPlatforms) do
 			if seg.position then
 				local rp = seg.position
-				table.insert(loadedParts, makeBall(Vector3.new(rp.X, rp.Y, rp.Z), Color3.fromRGB(120,200,255), "LRED_"..i))
+				table.insert(loadedParts, makePlatform(Vector3.new(rp.X,rp.Y,rp.Z), Color3.fromRGB(80,190,255), Vector3.new(2,0.2,2), "LRED_"..i))
 			end
-			for j, mv in ipairs(seg.movements or {}) do
-				local p = mv.position
-				table.insert(loadedParts, makeBall(Vector3.new(p.X, p.Y, p.Z), Color3.fromRGB(100,220,255), ("LM%d.%d"):format(i,j)))
+			local moves = {}
+			for _, mv in ipairs(seg.movements or {}) do
+				if mv.position then table.insert(moves, mv.position) end
+			end
+			moves = samplePoints(moves, 5, 8)
+			for _, p in ipairs(moves) do
+				table.insert(loadedParts, makePlatform(Vector3.new(p.X,p.Y,p.Z), Color3.fromRGB(100,230,255), Vector3.new(1,0.15,1), "LM"))
 			end
 		end
 	end
-	-- show yellows
+
 	if loadedObject and loadedObject.yellowPlatforms then
 		for i, yp in ipairs(loadedObject.yellowPlatforms) do
 			local p = yp.position
-			table.insert(loadedParts, makeBall(Vector3.new(p.X, p.Y, p.Z), Color3.fromRGB(180,240,120), "LYEL_"..i))
+			table.insert(loadedParts, makePlatform(Vector3.new(p.X,p.Y,p.Z), Color3.fromRGB(150,240,120), Vector3.new(2.2,0.2,2.2), "LYEL_"..i))
 		end
 	end
 end
 
-----------------------------------------------------
--- RECORD & STOP (100% gaya "auto walk 1")
-----------------------------------------------------
+----------------------------------------------------------------
+-- RECORD / STOP (klik dunia → movement)
+----------------------------------------------------------------
 local clickConn
 
 local function startRecording()
 	if recording then return end
 
-	-- auto-continue: kalau ada yellow terakhir → gerakkan avatar dulu ke sana
+	-- auto-continue: bila ada yellow terakhir → gerakkan avatar ke sana dulu
 	if lastYellowPosition then
 		local h = player.Character:WaitForChild("Humanoid")
 		h:MoveTo(lastYellowPosition + Vector3.new(0,3,0))
@@ -203,44 +216,40 @@ local function startRecording()
 		if UIS:GetFocusedTextBox() then return end
 		local cf = mouse.Hit; if not cf then return end
 		local pos = cf.p
-		local look = (hrp.CFrame.LookVector) -- orientation simple
+		local look = hrp.CFrame.LookVector
 
 		-- set red (start) jika belum ada
 		if not currentRedPosition then
-			currentRedPosition = {X = pos.X, Y = pos.Y, Z = pos.Z}
-			table.insert(redPlatforms, {
-				position  = currentRedPosition,
-				movements = currentMovements
-			})
+			currentRedPosition = {X=pos.X, Y=pos.Y, Z=pos.Z}
+			table.insert(redPlatforms, { position = currentRedPosition, movements = currentMovements })
 			visualizeRecorded()
 			return
 		end
 
 		-- tambahkan movement point
 		table.insert(currentMovements, {
-			position    = {X = pos.X, Y = pos.Y, Z = pos.Z},
-			orientation = {X = look.X, Y = look.Y, Z = look.Z}
+			position    = {X=pos.X, Y=pos.Y, Z=pos.Z},
+			orientation = {X=look.X, Y=look.Y, Z=look.Z}
 		})
 
-		-- visual incremental
-		table.insert(recordedParts, makeBall(pos, Color3.fromRGB(255,120,120), ("M%d"):format(#currentMovements)))
+		-- visual kecil (ringan)
+		table.insert(recordedParts, makePlatform(pos, Color3.fromRGB(255,120,120), Vector3.new(1,0.15,1), "RM"))
 	end)
 
-	Library:Notify("Recording ON (click world to add points)", 2)
+	Library:Notify("Recording ON (klik ground buat titik)", 2)
 end
 
 local function stopRecording()
 	if not recording then return end
 	recording = false
-	if clickConn then clickConn:Disconnect(); clickConn = nil end
+	if clickConn then clickConn:Disconnect(); clickConn=nil end
 
-	-- tentukan yellow = titik akhir segmen
+	-- yellow = titik akhir segmen (titik movement terakhir jika ada; jika tidak, pakai red)
 	local lastPoint
 	if #currentMovements > 0 then
 		lastPoint = currentMovements[#currentMovements].position
 	else
-		-- kalau belum ada movement, pakai red sebagai end (fallback)
-		lastPoint = currentRedPosition or {X = hrp.Position.X, Y = hrp.Position.Y, Z = hrp.Position.Z}
+		lastPoint = currentRedPosition or {X=hrp.Position.X, Y=hrp.Position.Y, Z=hrp.Position.Z}
 	end
 	local yp = { position = { X = lastPoint.X, Y = lastPoint.Y, Z = lastPoint.Z } }
 	table.insert(yellowPlatforms, yp)
@@ -251,14 +260,11 @@ local function stopRecording()
 end
 
 local function undoLastRecorded()
-	-- hapus point movement terakhir dari segmen berjalan (kalau sedang record)
 	if recording and #currentMovements > 0 then
 		currentMovements[#currentMovements] = nil
 	else
-		-- kalau tidak recording: hapus segmen terakhir (red + moves + yellow)
 		if #yellowPlatforms > 0 then yellowPlatforms[#yellowPlatforms] = nil end
-		if #redPlatforms > 0 then redPlatforms[#redPlatforms] = nil end
-		-- reset lastYellowPosition
+		if #redPlatforms    > 0 then redPlatforms[#redPlatforms]       = nil end
 		if #yellowPlatforms > 0 then
 			local yp = yellowPlatforms[#yellowPlatforms].position
 			lastYellowPosition = Vector3.new(yp.X, yp.Y, yp.Z)
@@ -278,9 +284,9 @@ local function clearRecordedAll()
 	visualizeRecorded()
 end
 
-----------------------------------------------------
--- SERIALIZE / DESERIALIZE (persis gaya auto walk 1)
-----------------------------------------------------
+----------------------------------------------------------------
+-- SERIALIZE / DESERIALIZE (objek penuh)
+----------------------------------------------------------------
 local function buildObject()
 	return {
 		redPlatforms    = redPlatforms,
@@ -290,24 +296,23 @@ local function buildObject()
 end
 
 local function saveToFile(filenameNoExt)
-	local obj = buildObject()
-	local json = HttpService:JSONEncode(obj)
+	local json = HttpService:JSONEncode(buildObject())
 	local fn = (filenameNoExt or "MyRecordedPath") .. ".json"
 	writefile(fn, json)
 	Library:Notify("Saved: "..fn, 2)
 end
 
+-- terima objek penuh (atau fallback array [{X,Y,Z}])
 local function loadFromString(jsonStr)
-	local data = HttpService:JSONDecode(jsonStr)
+	local ok, data = pcall(function() return HttpService:JSONDecode(jsonStr) end)
+	if not ok or not data then return false end
 
-	-- reset LOADED
 	loadedObject = nil
 	table.clear(loadedPoints)
 
-	-- kasus 1: struktur auto walk 1 (object)
-	if typeof(data) == "table" and data.redPlatforms then
+	if data.redPlatforms then
 		loadedObject = data
-		-- flatten untuk play cepat: gabungkan semua movements dari tiap red
+		-- flatten movements untuk replay cepat
 		for _, seg in ipairs(data.redPlatforms) do
 			for _, mv in ipairs(seg.movements or {}) do
 				if mv.position then table.insert(loadedPoints, mv.position) end
@@ -315,41 +320,43 @@ local function loadFromString(jsonStr)
 		end
 		visualizeLoaded()
 		return true
-	end
-
-	-- kasus 2: fallback array [{X,Y,Z}, ...]
-	if typeof(data) == "table" and data[1] and data[1].X then
+	elseif typeof(data)=="table" and data[1] and data[1].X then
 		loadedObject = {
 			redPlatforms    = { { position = data[1], movements = {} } },
 			yellowPlatforms = { { position = data[#data] } },
 			mappings        = {}
 		}
-		for _, pos in ipairs(data) do table.insert(loadedPoints, pos) end
+		for _, p in ipairs(data) do table.insert(loadedPoints, p) end
 		visualizeLoaded()
 		return true
 	end
-
 	return false
 end
 
-----------------------------------------------------
--- REPLAY (sistem lama)
-----------------------------------------------------
-local function replayPositions(listPoints)
-	if replaying or #listPoints == 0 then return end
+----------------------------------------------------------------
+-- REPLAY (smooth: skip titik rapat)
+----------------------------------------------------------------
+local function compressForRun(points, minDist)
+	return samplePoints(points, 1, minDist or 4)  -- default 4 stud minimal
+end
+
+local function replayPositions(pointsList)
+	if replaying or #pointsList == 0 then return end
 	replaying, shouldStop = true, false
 	local h = player.Character:WaitForChild("Humanoid")
-	for i, p in ipairs(listPoints) do
+
+	local run = compressForRun(pointsList, 4)  -- makin besar → makin cepat
+	for i, p in ipairs(run) do
 		if shouldStop then break end
-		h:MoveTo(Vector3.new(p.X, p.Y, p.Z) + Vector3.new(0,3,0))
+		h:MoveTo(Vector3.new(p.X,p.Y,p.Z) + Vector3.new(0,3,0))
 		h.MoveToFinished:Wait()
-		task.wait(0.20)
+		task.wait(0.05)
 	end
+
 	replaying = false
 end
 
 local function replayRecorded()
-	-- gabungkan semua movements dari semua segmen recorded (persis gaya loaded)
 	local buf = {}
 	for _, seg in ipairs(redPlatforms) do
 		for _, mv in ipairs(seg.movements or {}) do
@@ -360,7 +367,6 @@ local function replayRecorded()
 end
 
 local function replayLoaded()
-	-- kalau ada loadedObject, gunakan seluruh movements
 	if loadedObject and loadedObject.redPlatforms then
 		local buf = {}
 		for _, seg in ipairs(loadedObject.redPlatforms) do
@@ -369,20 +375,19 @@ local function replayLoaded()
 			end
 		end
 		replayPositions(buf)
-		return
+	else
+		replayPositions(loadedPoints)
 	end
-	-- fallback ke loadedPoints flatten
-	replayPositions(loadedPoints)
 end
 
 local function stopReplay()
 	shouldStop = true
-	replaying = false
+	replaying  = false
 end
 
-----------------------------------------------------
+----------------------------------------------------------------
 -- UI WINDOW & TABS
-----------------------------------------------------
+----------------------------------------------------------------
 local Window = Library:CreateWindow({
 	Title = "WS",
 	Footer = "Antartika Path Controller",
@@ -397,9 +402,9 @@ local Tabs = {
 	Setting = Window:AddTab("Setting",     "settings"),
 }
 
-----------------------------------------------------
--- TAB: MAIN FITURE
-----------------------------------------------------
+----------------------------------------------------------------
+-- TAB: MAIN
+----------------------------------------------------------------
 local MainBox = Tabs.Main:AddLeftGroupbox("Movement")
 
 MainBox:AddToggle("WS_Walk_Toggle", {
@@ -432,23 +437,23 @@ MainBox:AddToggle("WS_NoClip_Toggle", {
 	Callback = function(v) _G.__WS_noclipEnabled = v end
 })
 
-----------------------------------------------------
--- TAB: AUTO WALK  (SEMUA FITUR DARI AUTO WALK 1 DI SINI)
-----------------------------------------------------
+----------------------------------------------------------------
+-- TAB: AUTO WALK (semua kontrol)
+----------------------------------------------------------------
 local AutoL  = Tabs.Auto:AddLeftGroupbox("Record / Replay")
 local AutoR  = Tabs.Auto:AddRightGroupbox("Save / Load / Preset")
 
--- RECORD controls (start/stop/undo/clear)
+-- Record
 AutoL:AddButton("Start Record", function() startRecording() end)
 AutoL:AddButton("Stop Record",  function() stopRecording()  end)
 AutoL:AddButton("Undo Last",    function() undoLastRecorded() end)
+AutoL:AddButton("Clear RECORDED", function() clearRecordedAll() end)
 
 AutoL:AddDivider()
 AutoL:AddButton("Play RECORDED", function() replayRecorded() end)
 AutoL:AddButton("Stop Replay",   function() stopReplay() end)
-AutoL:AddButton("Clear RECORDED",function() clearRecordedAll() end)
 
--- SAVE (local file)
+-- Save local
 AutoR:AddInput("SaveName", {
 	Text = "Filename (no .json)",
 	Default = "MyRecordedPath",
@@ -459,7 +464,7 @@ AutoR:AddButton("Save RECORDED → file (.json)", function()
 	saveToFile(_G.__WS_SaveName or "MyRecordedPath")
 end)
 
--- LOAD (URL / raw JSON)
+-- Load URL / Raw JSON
 local currentURL = "https://raw.githubusercontent.com/WannBot/WindUI/refs/heads/main/Path1.json"
 AutoR:AddInput("URLInput", {
 	Text = "GitHub RAW URL / Raw JSON",
@@ -482,16 +487,10 @@ AutoR:AddButton("Load to LOADED (visualize)", function()
 		return
 	end
 	local ok2 = loadFromString(res)
-	if not ok2 then
-		Library:Notify("Invalid JSON structure", 2)
-	else
-		Library:Notify("Loaded OK", 1.5)
-	end
+	if not ok2 then Library:Notify("Invalid JSON structure", 2) else Library:Notify("Loaded OK", 1.5) end
 end)
 
-AutoR:AddButton("Play LOADED", function()
-	replayLoaded()
-end)
+AutoR:AddButton("Play LOADED", function() replayLoaded() end)
 
 AutoR:AddButton("Clear LOADED", function()
 	loadedObject = nil
@@ -500,7 +499,7 @@ AutoR:AddButton("Clear LOADED", function()
 	Library:Notify("LOADED cleared", 1.2)
 end)
 
--- Preset Path1..Path5 dari repo kamu
+-- Preset Path1..Path5
 AutoR:AddDivider()
 local baseURL = "https://raw.githubusercontent.com/WannBot/WindUI/refs/heads/main/"
 AutoR:AddButton("Play ALL (Path1→Path5)", function()
@@ -512,9 +511,7 @@ AutoR:AddButton("Play ALL (Path1→Path5)", function()
 				replayLoaded()
 				if shouldStop then break end
 				task.wait(0.25)
-			else
-				break
-			end
+			else break end
 		end
 	end)
 end)
@@ -523,16 +520,15 @@ for i=1,5 do
 	AutoR:AddButton("Play Path"..i, function()
 		local ok, res = pcall(function() return game:HttpGet(baseURL.."Path"..i..".json") end)
 		if not ok then Library:Notify("DL fail Path"..i, 2) return end
-		if not loadFromString(res) then Library:Notify("Invalid JSON Path"..i, 2) return end
+		if not loadFromString(res) then Library:Notify("JSON invalid Path"..i, 2) return end
 		replayLoaded()
 	end)
 end
 
-----------------------------------------------------
--- TAB: SETTING (Theme/Config)
-----------------------------------------------------
+----------------------------------------------------------------
+-- TAB: SETTING
+----------------------------------------------------------------
 local SettingBox = Tabs.Setting:AddLeftGroupbox("Theme / Config")
-
 SettingBox:AddDropdown("ThemeSelect", {
 	Values = { "Dark", "Light", "Aqua", "Midnight" },
 	Default = "Dark",
@@ -546,5 +542,4 @@ ThemeManager:SetFolder("WS")
 SaveManager:SetFolder("WS/config")
 SaveManager:BuildConfigSection(Tabs.Setting)
 ThemeManager:ApplyToTab(Tabs.Setting)
-
 Library.ToggleKeybind = Enum.KeyCode.RightShift
