@@ -55,18 +55,41 @@ local function stopPath()
 end
 
 local function playPathFile(filename)
-	if not isfile(filename .. ".json") then
-		warn("❌ File tidak ditemukan:", filename)
+	local url = "https://raw.githubusercontent.com/WannBot/<WindUI/refs/heads/main/" .. filename .. ".json"
+
+	-- Contoh:
+	-- local url = "https://raw.githubusercontent.com/WannBot/WindUI/refs/heads/main/Path1.json"
+
+	print("[AutoWalk] Downloading:", url)
+	local success, result = pcall(function()
+		return game:HttpGet(url)
+	end)
+
+	if not success then
+		warn("❌ Tidak bisa ambil file:", filename, result)
 		return
 	end
-	local data = HttpService:JSONDecode(readfile(filename .. ".json"))
+
+	local successDecode, data = pcall(function()
+		return HttpService:JSONDecode(result)
+	end)
+
+	if not successDecode or typeof(data) ~= "table" then
+		warn("❌ Format JSON tidak valid di:", filename)
+		return
+	end
+
 	autoWalkActive = true
-	for _, p in ipairs(data) do
+	print("[AutoWalk] Playing:", filename)
+
+	for _, pos in ipairs(data) do
 		if not autoWalkActive then break end
-		hum:MoveTo(Vector3.new(p.X, p.Y, p.Z))
+		hum:MoveTo(Vector3.new(pos.X, pos.Y, pos.Z))
 		hum.MoveToFinished:Wait()
 	end
+
 	autoWalkActive = false
+	print("[AutoWalk] Selesai:", filename)
 end
 
 -- ✅ Noclip loop
