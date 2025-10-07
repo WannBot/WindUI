@@ -1,262 +1,382 @@
--- 🧠 AUTO WALK V3 (Full GUI)
--- Kombinasi versi lama + tambahan tombol Load/Play/Save/All
--- Tetap pakai sistem MoveTo (bukan tween)
--- Dibuat untuk executor Android (Fluxus/Codex/Deltax dsb.)
+-- WS Auto Walk Controller (Opsi B)
+-- UI: Obsidian (deividcomsono / Linoria-based)
+-- Fitur: Record (click-to-place), Load JSON (RAW GitHub), Save JSON (local/clipboard), Play/Stop, Clear, Chunking
+-- Gerak avatar: SISTEM LAMA (Humanoid:MoveTo antar titik)
 
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
+----------------------------------------------------
+-- LOAD UI LIBRARIES
+----------------------------------------------------
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local Library      = loadstring(game:HttpGet(repo .. "Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+local SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+
+----------------------------------------------------
+-- SERVICES & INIT
+----------------------------------------------------
+local Players     = game:GetService("Players")
+local RunService  = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
-local player = Players.LocalPlayer
-local mouse = player:GetMouse()
+local UserInputService = game:GetService("UserInputService")
 
+local player    = Players.LocalPlayer
+local mouse     = player:GetMouse()
 local character = player.Character or player.CharacterAdded:Wait()
-local humanoid = character:WaitForChild("Humanoid")
-local hrp = character:WaitForChild("HumanoidRootPart")
+local hum       = character:WaitForChild("Humanoid")
+local hrp       = character:WaitForChild("HumanoidRootPart")
 
-local recording = false
-local replaying = false
-local shouldStopReplay = false
-local platforms = {}
-local pathData = {}
+-- refresh refs on respawn
+player.CharacterAdded:Connect(function(char)
+    character = char
+    hum = char:WaitForChild("Humanoid")
+    hrp = char:WaitForChild("HumanoidRootPart")
+    task.wait(0.3)
+    if _G.__WS_walkEnabled then hum.WalkSpeed = _G.__WS_walkSpeedValue or 16 end
+    if _G.__WS_jumpEnabled then hum.UseJumpPower = true; hum.JumpPower = _G.__WS_jumpPowerValue or 50 end
+end)
 
------------------------------------------------------------
--- 🪟 GUI SETUP
------------------------------------------------------------
-local screenGui = Instance.new("ScreenGui")
-screenGui.Parent = player.PlayerGui
-screenGui.ResetOnSpawn = false
-screenGui.Name = "AutoWalkGuiV3"
+----------------------------------------------------
+-- STATE (movement)
+----------------------------------------------------
+_G.__WS_walkEnabled     = false
+_G.__WS_jumpEnabled     = false
+_G.__WS_noclipEnabled   = false
+_G.__WS_walkSpeedValue  = 16
+_G.__WS_jumpPowerValue  = 50
 
-local frame = Instance.new("Frame")
-frame.Parent = screenGui
-frame.BackgroundColor3 = Color3.fromRGB(210, 230, 255)
-frame.Size = UDim2.new(0, 300, 0, 340)
-frame.Position = UDim2.new(0, 40, 0.5, -170)
-frame.Active = true
-frame.Draggable = true
-
-local title = Instance.new("TextLabel")
-title.Parent = frame
-title.BackgroundColor3 = Color3.fromRGB(70, 120, 200)
-title.Size = UDim2.new(1, 0, 0, 28)
-title.TextColor3 = Color3.new(1, 1, 1)
-title.Text = "Auto Walk Controller V3"
-title.Font = Enum.Font.SourceSansBold
-title.TextScaled = true
-
-local statusLabel = Instance.new("TextLabel")
-statusLabel.Parent = frame
-statusLabel.BackgroundTransparency = 1
-statusLabel.Position = UDim2.new(0, 0, 0, 28)
-statusLabel.Size = UDim2.new(1, 0, 0, 25)
-statusLabel.Text = "Status: Idle"
-statusLabel.TextColor3 = Color3.new(0, 0, 0)
-statusLabel.Font = Enum.Font.SourceSans
-statusLabel.TextScaled = true
-
-local function setStatus(txt, color)
-	statusLabel.Text = "Status: " .. txt
-	if color then statusLabel.TextColor3 = color end
+-- apply helpers
+local function applyWalk()
+    if hum and hum.Parent then
+        hum.WalkSpeed = _G.__WS_walkEnabled and _G.__WS_walkSpeedValue or 16
+    end
 end
-
------------------------------------------------------------
--- 🔘 BUTTON CREATOR
------------------------------------------------------------
-local function makeButton(name, text, order, color)
-	local btn = Instance.new("TextButton")
-	btn.Parent = frame
-	btn.Name = name
-	btn.Text = text
-	btn.Size = UDim2.new(0, 260, 0, 28)
-	btn.Position = UDim2.new(0, 20, 0, 60 + (order * 30))
-	btn.BackgroundColor3 = color or Color3.fromRGB(150, 180, 255)
-	btn.TextScaled = true
-	btn.Font = Enum.Font.SourceSansBold
-	return btn
+local function applyJump()
+    if hum and hum.Parent then
+        hum.UseJumpPower = true
+        hum.JumpPower = _G.__WS_jumpEnabled and _G.__WS_jumpPowerValue or 50
+    end
 end
+RunService.Stepped:Connect(function()
+    if _G.__WS_noclipEnabled and player.Character then
+        for _, part in ipairs(player.Character:GetDescendants()) do
+            if part:IsA("BasePart") then part.CanCollide = false end
+        end
+    end
+end)
 
-local recordBtn = makeButton("Record", "🎬 Start Record", 0, Color3.fromRGB(255, 180, 120))
-local stopRecordBtn = makeButton("StopRecord", "⏹ Stop Record", 1, Color3.fromRGB(255, 120, 120))
-local playBtn = makeButton("PlayPath", "▶️ Play Recorded Path", 2, Color3.fromRGB(160, 255, 160))
-local stopReplayBtn = makeButton("StopReplay", "⛔ Stop Replay", 3, Color3.fromRGB(255, 160, 160))
-local saveBtn = makeButton("Save", "💾 Save Path", 4, Color3.fromRGB(150, 200, 255))
-local loadBtn = makeButton("Load", "📂 Load JSON URL", 5, Color3.fromRGB(150, 255, 150))
-local playLoadedBtn = makeButton("PlayLoaded", "▶️ Play Loaded Path", 6, Color3.fromRGB(180, 255, 180))
-local playAllBtn = makeButton("PlayAll", "🌎 Play All (Path1→Path5)", 7, Color3.fromRGB(255, 240, 150))
-local clearBtn = makeButton("Clear", "🧹 Clear Platforms", 8, Color3.fromRGB(210, 210, 255))
+----------------------------------------------------
+-- STATE (auto walk – SISTEM LAMA)
+----------------------------------------------------
+local recording          = false
+local platforms          = {}      -- list of all point Parts (visual)
+local pathChunks         = { { } } -- list of chunks; each chunk is array of {X,Y,Z}
+local currentChunkIndex  = 1
 
------------------------------------------------------------
--- 💾 INPUT FIELD UNTUK LOAD JSON
------------------------------------------------------------
-local urlBox = Instance.new("TextBox")
-urlBox.Parent = frame
-urlBox.Size = UDim2.new(0, 260, 0, 25)
-urlBox.Position = UDim2.new(0, 20, 0, 340 - 60)
-urlBox.Text = "https://raw.githubusercontent.com/WannBot/WindUI/refs/heads/main/Path1.json"
-urlBox.PlaceholderText = "Masukkan URL JSON di sini..."
-urlBox.TextColor3 = Color3.new(0, 0, 0)
-urlBox.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-urlBox.ClearTextOnFocus = false
-urlBox.TextScaled = true
-urlBox.Font = Enum.Font.SourceSansBold
+local replaying          = false
+local shouldStopReplay   = false
 
------------------------------------------------------------
--- 🧱 PLATFORM SYSTEM
------------------------------------------------------------
+-- helpers
 local function clearPlatforms()
-	for _, p in ipairs(platforms) do
-		if p and p.Parent then p:Destroy() end
-	end
-	table.clear(platforms)
-	table.clear(pathData)
+    for _, p in ipairs(platforms) do
+        if p and p.Parent then p:Destroy() end
+    end
+    table.clear(platforms)
 end
 
-local function addPlatform(pos, color)
-	local part = Instance.new("Part")
-	part.Anchored = true
-	part.CanCollide = false
-	part.Material = Enum.Material.Neon
-	part.Color = color or Color3.fromRGB(255, 170, 70)
-	part.Size = Vector3.new(1, 1, 1)
-	part.Shape = Enum.PartType.Ball
-	part.Position = pos
-	part.Name = "PathPoint"
-	part.Parent = workspace
-	table.insert(platforms, part)
+local function spawnPoint(pos, color)
+    local part = Instance.new("Part")
+    part.Name = "WS_AutoWalk_Point"
+    part.Anchored = true
+    part.CanCollide = false
+    part.Material = Enum.Material.Neon
+    part.Color = color or Color3.fromRGB(255,190,80)
+    part.Size = Vector3.new(0.9, 0.9, 0.9)
+    part.Shape = Enum.PartType.Ball
+    part.Position = pos
+    part.Parent = workspace
+    table.insert(platforms, part)
 end
 
------------------------------------------------------------
--- 🧭 RECORDING SYSTEM
------------------------------------------------------------
-local conn
-recordBtn.MouseButton1Click:Connect(function()
-	if recording then return end
-	recording = true
-	setStatus("Recording...", Color3.fromRGB(255,140,0))
-	clearPlatforms()
-	pathData = {}
-	conn = mouse.Button1Down:Connect(function()
-		if not recording then return end
-		local target = mouse.Hit and mouse.Hit.p
-		if target then
-			local point = {X = target.X, Y = target.Y, Z = target.Z}
-			table.insert(pathData, point)
-			addPlatform(Vector3.new(target.X, target.Y, target.Z))
-		end
-	end)
-end)
-
-stopRecordBtn.MouseButton1Click:Connect(function()
-	if not recording then return end
-	recording = false
-	if conn then conn:Disconnect() conn = nil end
-	setStatus("Recording stopped", Color3.fromRGB(0,255,0))
-end)
-
------------------------------------------------------------
--- ▶️ REPLAY PATH
------------------------------------------------------------
-local function replay(data)
-	if replaying or #data == 0 then return end
-	replaying = true
-	shouldStopReplay = false
-	setStatus("Replaying path...", Color3.fromRGB(0,180,0))
-
-	for i, pos in ipairs(data) do
-		if shouldStopReplay then break end
-		humanoid:MoveTo(Vector3.new(pos.X, pos.Y, pos.Z))
-		humanoid.MoveToFinished:Wait()
-		task.wait(0.1)
-	end
-
-	replaying = false
-	setStatus("Replay finished", Color3.fromRGB(0,255,0))
+local function flattenChunks(chunks)
+    -- menerima { {points...}, {points...}, ... } atau flat array
+    -- return flat array of {X,Y,Z}
+    local flat = {}
+    if #chunks == 0 then return flat end
+    if chunks[1] and chunks[1].X ~= nil then
+        -- sudah flat
+        return chunks
+    end
+    for _, chunk in ipairs(chunks) do
+        for _, p in ipairs(chunk) do table.insert(flat, p) end
+    end
+    return flat
 end
 
-playBtn.MouseButton1Click:Connect(function()
-	replay(pathData)
+local function visualizeFromData(data)
+    clearPlatforms()
+    local flat = flattenChunks(data)
+    for _, pos in ipairs(flat) do
+        spawnPoint(Vector3.new(pos.X, pos.Y, pos.Z))
+    end
+end
+
+local function serializeToJSON()
+    -- simpan sebagai flat array untuk kompatibilitas (Path1.json kamu)
+    local flat = flattenChunks(pathChunks)
+    return HttpService:JSONEncode(flat)
+end
+
+local function loadFromJSON(jsonStr)
+    -- terima JSON flat atau chunked
+    local data = HttpService:JSONDecode(jsonStr)
+    local flat = flattenChunks(data)
+    -- rebuild chunks jadi 1 chunk saja (biar sederhana)
+    pathChunks = { {} }
+    currentChunkIndex = 1
+    for _, p in ipairs(flat) do
+        table.insert(pathChunks[1], {X=p.X, Y=p.Y, Z=p.Z})
+    end
+    visualizeFromData(pathChunks)
+end
+
+local function replayFlat(flat)
+    if replaying or #flat == 0 then return end
+    replaying = true
+    shouldStopReplay = false
+    local h = player.Character:WaitForChild("Humanoid")
+    for i, pos in ipairs(flat) do
+        if shouldStopReplay then break end
+        h:MoveTo(Vector3.new(pos.X, pos.Y, pos.Z) + Vector3.new(0, 3, 0))
+        h.MoveToFinished:Wait()
+        task.wait(0.20)
+    end
+    replaying = false
+end
+
+local function replayAll()
+    local flat = flattenChunks(pathChunks)
+    replayFlat(flat)
+end
+
+----------------------------------------------------
+-- RECORDING (click-to-place)
+----------------------------------------------------
+local recordConn
+local function startRecording()
+    if recording then return end
+    recording = true
+    Library:Notify("Recording started (tap tanah untuk menambah titik)", 2)
+
+    -- pastikan chunk ada
+    pathChunks[currentChunkIndex] = pathChunks[currentChunkIndex] or {}
+
+    -- klik kiri untuk tambah titik
+    recordConn = mouse.Button1Down:Connect(function()
+        if not recording then return end
+        local target = mouse.Hit and mouse.Hit.p
+        if target then
+            local point = { X = target.X, Y = target.Y, Z = target.Z }
+            table.insert(pathChunks[currentChunkIndex], point)
+            spawnPoint(Vector3.new(point.X, point.Y, point.Z), Color3.fromRGB(255,150,90))
+        end
+    end)
+end
+
+local function stopRecording()
+    if not recording then return end
+    recording = false
+    if recordConn then
+        recordConn:Disconnect()
+        recordConn = nil
+    end
+    Library:Notify("Recording stopped", 1.5)
+end
+
+local function nextChunk()
+    currentChunkIndex += 1
+    pathChunks[currentChunkIndex] = {}
+    Library:Notify("New chunk: "..tostring(currentChunkIndex), 1.5)
+end
+
+local function clearAll()
+    stopRecording()
+    clearPlatforms()
+    pathChunks = { {} }
+    currentChunkIndex = 1
+end
+
+----------------------------------------------------
+-- LOAD / SAVE (URL & local)
+----------------------------------------------------
+local function loadFromURL(url)
+    local ok, res = pcall(function() return game:HttpGet(url) end)
+    if not ok or not res or #res == 0 then
+        Library:Notify("Download gagal / kosong", 2)
+        return
+    end
+    local ok2 = pcall(function() loadFromJSON(res) end)
+    if not ok2 then
+        Library:Notify("JSON invalid", 2)
+        return
+    end
+    Library:Notify("Loaded: "..tostring(#flattenChunks(pathChunks)).." titik", 2)
+end
+
+local function saveToFile(fname)
+    local json = serializeToJSON()
+    if writefile then
+        writefile(fname, json)
+        Library:Notify("Saved: "..fname, 2)
+    else
+        Library:Notify("Executor tidak support writefile", 2)
+    end
+    if setclipboard then
+        setclipboard(json)
+        Library:Notify("JSON copied to clipboard", 2)
+    end
+end
+
+----------------------------------------------------
+-- WINDOW & TABS (UI)
+----------------------------------------------------
+local Window = Library:CreateWindow({
+    Title = "WS",
+    Footer = "Antartika Path Controller",
+    Icon = 95816097006870,
+    NotifySide = "Right",
+    ShowCustomCursor = true,
+})
+
+local Tabs = {
+    Main    = Window:AddTab("Main Fiture", "user"),
+    Auto    = Window:AddTab("Auto Walk",   "move"),
+    Setting = Window:AddTab("Setting",     "settings"),
+}
+
+----------------------------------------------------
+-- TAB: MAIN FITURE (Walk/Jump/Noclip)
+----------------------------------------------------
+local MainBox = Tabs.Main:AddLeftGroupbox("Movement")
+
+MainBox:AddToggle("WS_Walk_Toggle", {
+    Text = "WalkSpeed ON/OFF",
+    Default = false,
+    Callback = function(v) _G.__WS_walkEnabled = v; applyWalk() end
+})
+MainBox:AddSlider("WS_Walk_Slider", {
+    Text = "Speed",
+    Default = 16, Min = 10, Max = 100, Rounding = 0,
+    Callback = function(v) _G.__WS_walkSpeedValue = v; if _G.__WS_walkEnabled then applyWalk() end end
+})
+
+MainBox:AddToggle("WS_Jump_Toggle", {
+    Text = "JumpPower ON/OFF",
+    Default = false,
+    Callback = function(v) _G.__WS_jumpEnabled = v; applyJump() end
+})
+MainBox:AddSlider("WS_Jump_Slider", {
+    Text = "JumpPower",
+    Default = 50, Min = 25, Max = 200, Rounding = 0,
+    Callback = function(v) _G.__WS_jumpPowerValue = v; if _G.__WS_jumpEnabled then applyJump() end end
+})
+
+MainBox:AddToggle("WS_NoClip_Toggle", {
+    Text = "NoClip ON/OFF",
+    Default = false,
+    Callback = function(v) _G.__WS_noclipEnabled = v end
+})
+
+----------------------------------------------------
+-- TAB: AUTO WALK (SEMUA FITUR AUTO WALK DI SINI)
+----------------------------------------------------
+local AutoBoxLeft  = Tabs.Auto:AddLeftGroupbox("Controls")
+local AutoBoxRight = Tabs.Auto:AddRightGroupbox("Load / Save")
+
+-- RECORDING
+AutoBoxLeft:AddButton("Record (click-to-place)", function()
+    startRecording()
+end)
+AutoBoxLeft:AddButton("Stop Record", function()
+    stopRecording()
+end)
+AutoBoxLeft:AddButton("Next Chunk", function()
+    nextChunk()
+end)
+AutoBoxLeft:AddDivider()
+AutoBoxLeft:AddButton("Play Loaded Path", function()
+    replayAll()
+end)
+AutoBoxLeft:AddButton("Stop", function()
+    shouldStopReplay = true
+    replaying = false
+    Library:Notify("Stopped", 1.5)
+end)
+AutoBoxLeft:AddButton("Clear Visual & Data", function()
+    clearAll()
+    Library:Notify("Cleared", 1.5)
 end)
 
-stopReplayBtn.MouseButton1Click:Connect(function()
-	shouldStopReplay = true
-	replaying = false
-	setStatus("Stopped", Color3.fromRGB(255,255,0))
+-- URL INPUT + LOAD
+local baseURL = "https://raw.githubusercontent.com/WannBot/WindUI/refs/heads/main/"
+local currentURL = baseURL .. "Path1.json"
+
+AutoBoxRight:AddInput("WS_URL_Input", {
+    Text = "GitHub RAW URL",
+    Default = currentURL,
+    Placeholder = "https://raw.githubusercontent.com/<user>/<repo>/<branch>/Path1.json",
+    Numeric = false, Finished = true,
+    Callback = function(value)
+        if value and #value > 0 then currentURL = value end
+    end
+})
+AutoBoxRight:AddButton("Load URL & Visualize", function()
+    loadFromURL(currentURL)
 end)
 
------------------------------------------------------------
--- 💾 SAVE / LOAD JSON
------------------------------------------------------------
-saveBtn.MouseButton1Click:Connect(function()
-	if #pathData == 0 then
-		setStatus("No path to save", Color3.fromRGB(255,0,0))
-		return
-	end
-	local json = HttpService:JSONEncode(pathData)
-	if writefile then
-		writefile("AutoWalk_Path.json", json)
-		setStatus("Saved to AutoWalk_Path.json", Color3.fromRGB(0,255,0))
-	end
-	if setclipboard then
-		setclipboard(json)
-		setStatus("Copied to clipboard", Color3.fromRGB(0,255,0))
-	end
+-- QUICK BUTTONS (Path1–Path5 dari repo kamu)
+AutoBoxRight:AddDivider()
+for i = 1, 5 do
+    AutoBoxRight:AddButton("Play Path"..i, function()
+        loadFromURL(baseURL .. "Path"..i..".json")
+        -- langsung mainkan setelah load:
+        task.spawn(function()
+            replayAll()
+        end)
+    end)
+end
+
+-- SAVE
+AutoBoxRight:AddDivider()
+AutoBoxRight:AddInput("WS_SaveName", {
+    Text = "Save as filename",
+    Default = "WS_Path_"..os.time()..".json",
+    Placeholder = "contoh: MyRoute.json",
+    Numeric = false, Finished = true,
+    Callback = function(_) end
+})
+AutoBoxRight:AddButton("Save JSON (file + clipboard)", function()
+    local obj = Library.Flags.WS_SaveName
+    local fname = (type(obj) == "table" and obj.Value) and obj.Value or "WS_Path_"..os.time()..".json"
+    if not fname:lower():match("%.json$") then fname = fname .. ".json" end
+    saveToFile(fname)
 end)
 
-loadBtn.MouseButton1Click:Connect(function()
-	local url = urlBox.Text
-	setStatus("Loading from URL...", Color3.fromRGB(0,120,255))
-	local ok, res = pcall(function() return game:HttpGet(url) end)
-	if not ok or not res or #res == 0 then
-		setStatus("Failed to load", Color3.fromRGB(255,0,0))
-		return
-	end
-	local ok2, data = pcall(function() return HttpService:JSONDecode(res) end)
-	if not ok2 or typeof(data) ~= "table" then
-		setStatus("Invalid JSON", Color3.fromRGB(255,0,0))
-		return
-	end
-	clearPlatforms()
-	for _, p in ipairs(data) do
-		addPlatform(Vector3.new(p.X, p.Y, p.Z))
-	end
-	pathData = data
-	setStatus("Loaded "..#data.." points", Color3.fromRGB(0,255,0))
-end)
+----------------------------------------------------
+-- TAB: SETTING
+----------------------------------------------------
+local SettingBox = Tabs.Setting:AddLeftGroupbox("Theme / Config")
+SettingBox:AddDropdown("ThemeSelect", {
+    Values = { "Dark", "Light", "Aqua", "Midnight" },
+    Default = "Dark",
+    Text = "Select Theme",
+    Callback = function(opt) Window:SetTheme(opt) end,
+})
 
-playLoadedBtn.MouseButton1Click:Connect(function()
-	replay(pathData)
-end)
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+ThemeManager:SetFolder("WS")
+SaveManager:SetFolder("WS/config")
+SaveManager:BuildConfigSection(Tabs.Setting)
+ThemeManager:ApplyToTab(Tabs.Setting)
 
------------------------------------------------------------
--- 🌎 PLAY ALL (Path1→Path5)
------------------------------------------------------------
-playAllBtn.MouseButton1Click:Connect(function()
-	task.spawn(function()
-		for i = 1, 5 do
-			local url = ("https://raw.githubusercontent.com/WannBot/WindUI/refs/heads/main/Path%d.json"):format(i)
-			local ok, res = pcall(function() return game:HttpGet(url) end)
-			if ok and res and #res > 0 then
-				local ok2, data = pcall(function() return HttpService:JSONDecode(res) end)
-				if ok2 then
-					clearPlatforms()
-					for _, p in ipairs(data) do
-						addPlatform(Vector3.new(p.X, p.Y, p.Z))
-					end
-					pathData = data
-					setStatus("Playing Path"..i, Color3.fromRGB(0,255,255))
-					replay(data)
-				end
-			end
-			if shouldStopReplay then break end
-			task.wait(0.5)
-		end
-		setStatus("Finished All", Color3.fromRGB(0,255,0))
-	end)
-end)
-
-clearBtn.MouseButton1Click:Connect(function()
-	clearPlatforms()
-	setStatus("Cleared all", Color3.fromRGB(100,100,255))
-end)
-
-setStatus("Idle", Color3.fromRGB(0,0,0))
+Library.ToggleKeybind = Enum.KeyCode.RightShift
