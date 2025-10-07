@@ -8,20 +8,49 @@ local SaveManager = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
+
 local player = Players.LocalPlayer
-local hum = player.Character or player.CharacterAdded:Wait():WaitForChild("Humanoid")
+local character = player.Character or player.CharacterAdded:Wait()
+local hum = character:WaitForChild("Humanoid")
+
+-- 🔁 Auto update Humanoid saat respawn
+player.CharacterAdded:Connect(function(char)
+	character = char
+	hum = char:WaitForChild("Humanoid")
+	task.wait(0.5)
+	if walkEnabled then hum.WalkSpeed = walkSpeedValue end
+	if jumpEnabled then hum.JumpPower = jumpPowerValue end
+end)
 
 -- ✅ State
 local walkEnabled, jumpEnabled, noclipEnabled = false, false, false
 local walkSpeedValue, jumpPowerValue = 16, 50
 local playAll, autoWalkActive = false, false
 
--- ✅ Functions
-local function applyWalk()  if hum then hum.WalkSpeed = walkEnabled and walkSpeedValue or 16 end end
-local function applyJump()  if hum then hum.JumpPower = jumpEnabled and jumpPowerValue or 50 end end
-local function stopPath()   autoWalkActive = false end
+----------------------------------------------------
+-- ⚙️ Utility
+----------------------------------------------------
+local function applyWalk()
+	if hum and hum.Parent then
+		hum.WalkSpeed = walkEnabled and walkSpeedValue or 16
+	end
+end
+
+local function applyJump()
+	if hum and hum.Parent then
+		hum.JumpPower = jumpEnabled and jumpPowerValue or 50
+	end
+end
+
+local function stopPath()
+	autoWalkActive = false
+end
+
 local function playPathFile(filename)
-	if not isfile(filename .. ".json") then return warn("❌ Missing:", filename) end
+	if not isfile(filename .. ".json") then
+		warn("❌ File tidak ditemukan:", filename)
+		return
+	end
 	local data = HttpService:JSONDecode(readfile(filename .. ".json"))
 	autoWalkActive = true
 	for _, p in ipairs(data) do
@@ -31,10 +60,14 @@ local function playPathFile(filename)
 	end
 	autoWalkActive = false
 end
+
+-- ✅ Noclip loop
 RunService.Stepped:Connect(function()
 	if noclipEnabled and player.Character then
 		for _, part in ipairs(player.Character:GetDescendants()) do
-			if part:IsA("BasePart") then part.CanCollide = false end
+			if part:IsA("BasePart") then
+				part.CanCollide = false
+			end
 		end
 	end
 end)
@@ -63,31 +96,51 @@ local MainBox = Tabs.Main:AddLeftGroupbox("Movement Control")
 MainBox:AddToggle("WalkspeedToggle", {
 	Text = "WalkSpeed ON/OFF",
 	Default = false,
-	Callback = function(v) walkEnabled = v; applyWalk() end,
+	Callback = function(v)
+		walkEnabled = v
+		applyWalk()
+	end,
 })
 
 MainBox:AddSlider("WalkspeedValue", {
 	Text = "Speed",
-	Default = 16, Min = 10, Max = 100, Rounding = 0,
-	Callback = function(v) walkSpeedValue = v; applyWalk() end,
+	Default = 16,
+	Min = 10,
+	Max = 100,
+	Rounding = 0,
+	Callback = function(v)
+		walkSpeedValue = v
+		if walkEnabled then applyWalk() end
+	end,
 })
 
 MainBox:AddToggle("JumpToggle", {
 	Text = "JumpPower ON/OFF",
 	Default = false,
-	Callback = function(v) jumpEnabled = v; applyJump() end,
+	Callback = function(v)
+		jumpEnabled = v
+		applyJump()
+	end,
 })
 
 MainBox:AddSlider("JumpPowerValue", {
 	Text = "JumpPower",
-	Default = 50, Min = 25, Max = 200, Rounding = 0,
-	Callback = function(v) jumpPowerValue = v; applyJump() end,
+	Default = 50,
+	Min = 25,
+	Max = 200,
+	Rounding = 0,
+	Callback = function(v)
+		jumpPowerValue = v
+		if jumpEnabled then applyJump() end
+	end,
 })
 
 MainBox:AddToggle("NoClip", {
 	Text = "NoClip ON/OFF",
 	Default = false,
-	Callback = function(v) noclipEnabled = v end,
+	Callback = function(v)
+		noclipEnabled = v
+	end,
 })
 
 ----------------------------------------------------
