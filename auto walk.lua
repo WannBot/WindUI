@@ -38,7 +38,15 @@ end
 
 local function applyJump()
 	if hum and hum.Parent then
-		hum.JumpPower = jumpEnabled and jumpPowerValue or 50
+		-- Pastikan karakter pakai JumpPower mode
+		if hum:FindFirstChild("UseJumpPower") then
+			hum.UseJumpPower = true
+			hum.JumpPower = jumpEnabled and jumpPowerValue or 50
+		else
+			-- Fallback: kalau pakai JumpHeight
+			local baseHeight = 7.2 -- default jump height kira-kira 50 JumpPower
+			hum.JumpHeight = jumpEnabled and (jumpPowerValue / 7) or baseHeight
+		end
 	end
 end
 
