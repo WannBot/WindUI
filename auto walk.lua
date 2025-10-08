@@ -165,50 +165,49 @@ end
 ----------------------------------------------------------
 -- REPLAY ULTIMATE FIX (Force Jump + Auto Jumping)
 ----------------------------------------------------------
+----------------------------------------------------------
+-- REPLAY FINAL (Auto Jump 100% + ChangeState)
+----------------------------------------------------------
 local function replay(points)
 	if replaying or #points == 0 then return end
 	replaying, shouldStop = true, false
+
 	local h = player.Character:WaitForChild("Humanoid")
 	local hrp = player.Character:WaitForChild("HumanoidRootPart")
 	local lastY = hrp.Position.Y
 
-	-- skip titik rapat
-	local function compressPoints(points, minDist)
-		local filtered, last = {}, nil
+	-- hilangkan titik rapat biar halus
+	local function compress(points, minDist)
+		local out, last = {}, nil
 		for _, p in ipairs(points) do
 			local pos = p.position or p
-			local vec = Vector3.new(pos.X, pos.Y, pos.Z)
-			if not last or (vec - last).Magnitude > (minDist or 5) then
-				table.insert(filtered, p)
-				last = vec
+			local v3 = Vector3.new(pos.X, pos.Y, pos.Z)
+			if not last or (v3 - last).Magnitude > (minDist or 5) then
+				table.insert(out, p)
+				last = v3
 			end
 		end
-		return filtered
+		return out
 	end
 
-	local runPoints = compressPoints(points, 6)
+	local runPoints = compress(points, 6)
 
 	for _, mv in ipairs(runPoints) do
 		if shouldStop then break end
+
 		local pos = mv.position or mv
 		local target = Vector3.new(pos.X, pos.Y, pos.Z)
-
-		-- deteksi jump flag
-		local jumpFlag = mv.isJumping or mv.isJump or mv.jump
-			or (pos.isJumping or pos.isJump or pos.jump)
+		local jumpFlag = mv.isJumping or mv.isJump or mv.jump or
+			(pos.isJumping or pos.isJump or pos.jump)
 
 		local deltaY = math.abs((pos.Y or 0) - lastY)
 		if deltaY > 4 then jumpFlag = true end
 
-		-- kalau butuh loncat, lompat dulu sebelum jalan
+		-- 💥 Trigger loncat
 		if jumpFlag then
-			task.wait(0.05)
-			if hrp and hrp.Parent then
-				-- gunakan ApplyJumpImpulse agar loncat pasti terjadi
-				local rootVel = hrp.AssemblyLinearVelocity
-				hrp:ApplyImpulse(Vector3.new(0, h.JumpPower * 2.5, 0))
-			end
-			h.Jump = true
+			task.spawn(function()
+				h:ChangeState(Enum.HumanoidStateType.Jumping)
+			end)
 			task.wait(0.15)
 		end
 
@@ -218,7 +217,7 @@ local function replay(points)
 	end
 
 	replaying = false
-	Library:Notify("✅ Replay Finished", 1.2)
+	Library:Notify("✅ Replay selesai", 1)
 end
 
 local function playRecorded()
