@@ -163,10 +163,7 @@ local function loadJson(str)
 end
 
 ----------------------------------------------------------
--- REPLAY ULTIMATE FIX (Force Jump + Auto Jumping)
-----------------------------------------------------------
-----------------------------------------------------------
--- REPLAY FINAL (Auto Jump 100% + ChangeState)
+-- REPLAY ANTI-SPAM JUMP (Stable Flight Fix)
 ----------------------------------------------------------
 local function replay(points)
 	if replaying or #points == 0 then return end
@@ -175,8 +172,10 @@ local function replay(points)
 	local h = player.Character:WaitForChild("Humanoid")
 	local hrp = player.Character:WaitForChild("HumanoidRootPart")
 	local lastY = hrp.Position.Y
+	local lastJump = 0
+	local jumpCooldown = 0.8 -- detik
 
-	-- hilangkan titik rapat biar halus
+	-- skip titik rapat biar halus
 	local function compress(points, minDist)
 		local out, last = {}, nil
 		for _, p in ipairs(points) do
@@ -197,17 +196,20 @@ local function replay(points)
 
 		local pos = mv.position or mv
 		local target = Vector3.new(pos.X, pos.Y, pos.Z)
+
+		-- deteksi flag loncat
 		local jumpFlag = mv.isJumping or mv.isJump or mv.jump or
 			(pos.isJumping or pos.isJump or pos.jump)
 
 		local deltaY = math.abs((pos.Y or 0) - lastY)
 		if deltaY > 4 then jumpFlag = true end
 
-		-- 💥 Trigger loncat
-		if jumpFlag then
+		-- 💥 Loncat hanya jika cooldown lewat
+		if jumpFlag and (tick() - lastJump > jumpCooldown) then
 			task.spawn(function()
 				h:ChangeState(Enum.HumanoidStateType.Jumping)
 			end)
+			lastJump = tick()
 			task.wait(0.15)
 		end
 
