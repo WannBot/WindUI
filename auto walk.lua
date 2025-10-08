@@ -140,10 +140,18 @@ end
 ----------------------------------------------------------
 -- Replay (smooth + detect isJumping)
 ----------------------------------------------------------
+----------------------------------------------------------
+-- REPLAY UNIVERSAL (Fix isJumping semua format)
+----------------------------------------------------------
 local function compressPoints(points, minDist)
 	local filtered, last = {}, nil
 	for _, p in ipairs(points) do
-		local pos = Vector3.new(p.position.X, p.position.Y, p.position.Z)
+		local pos
+		if p.position then
+			pos = Vector3.new(p.position.X, p.position.Y, p.position.Z)
+		else
+			pos = Vector3.new(p.X, p.Y, p.Z)
+		end
 		if not last or (pos - last).Magnitude > (minDist or 5) then
 			table.insert(filtered, p)
 			last = pos
@@ -152,27 +160,31 @@ local function compressPoints(points, minDist)
 	return filtered
 end
 
-local function replay(movements)
-	if replaying or #movements == 0 then return end
+local function replay(points)
+	if replaying or #points == 0 then return end
 	replaying, shouldStop = true, false
 	local h = player.Character:WaitForChild("Humanoid")
 	local lastY = hrp.Position.Y
-	local runPoints = compressPoints(movements, 6)
+
+	local runPoints = compressPoints(points, 6)
 
 	for _, mv in ipairs(runPoints) do
 		if shouldStop then break end
+
+		-- deteksi posisi universal
 		local pos = mv.position or mv
 		local target = Vector3.new(pos.X, pos.Y, pos.Z)
 		h:MoveTo(target)
 
-		-- 🔹 Deteksi loncat (isJumping/isJump/jump atau beda tinggi)
+		-- 🟢 Deteksi loncat di semua format
 		local jumpFlag = false
-		if mv.isJumping or mv.isJump or mv.jump then
+		if mv.isJumping or mv.isJump or mv.jump or (pos.isJumping or pos.isJump or pos.jump) then
 			jumpFlag = true
 		else
 			local deltaY = math.abs((pos.Y or 0) - lastY)
 			if deltaY > 4 then jumpFlag = true end
 		end
+
 		if jumpFlag then
 			task.wait(0.05)
 			h.Jump = true
