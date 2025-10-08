@@ -1,10 +1,10 @@
--- 🧊 WS Auto Walk Final (Obsidian UI)
--- Ringan, tanpa visual, replay halus, support loncat
+-- 🧊 WS Auto Walk FINAL FIX (Smooth + Jump + Stop)
+-- Lightweight, tanpa visual, smooth replay, support jump (isJumping/isJump/jump)
 -- Repo Path: https://raw.githubusercontent.com/WannBot/WindUI/refs/heads/main/PathX.json
 -- By WannBot x ChatGPT
 
 ----------------------------------------------------------
--- Library & Service
+-- Library & Services
 ----------------------------------------------------------
 local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
 local Library = loadstring(game:HttpGet(repo.."Library.lua"))()
@@ -136,10 +136,7 @@ local function loadJson(str)
 end
 
 ----------------------------------------------------------
--- Replay System
-----------------------------------------------------------
-----------------------------------------------------------
--- REPLAY (halus + auto jump detection)
+-- REPLAY (smooth + jump + stop)
 ----------------------------------------------------------
 local function compressPoints(points, minDist)
 	local filtered = {}
@@ -159,23 +156,21 @@ local function replay(points)
 	replaying, shouldStop = true, false
 	local h = player.Character:WaitForChild("Humanoid")
 	local lastY = hrp.Position.Y
+	local runPoints = compressPoints(points, 6)
 
-	local runPoints = compressPoints(points, 6) -- skip titik rapat
-
-	for i, p in ipairs(runPoints) do
+	for _, p in ipairs(runPoints) do
 		if shouldStop then break end
 		local target = Vector3.new(p.X, p.Y, p.Z)
 		h:MoveTo(target)
 
-		-- ✨ Deteksi loncat otomatis:
+		-- 🟢 Deteksi loncat (isJump, isJumping, jump, atau beda tinggi)
 		local jumpFlag = false
-		if p.isJump or p.jump then
+		if p.isJump or p.jump or p.isJumping then
 			jumpFlag = true
 		else
 			local deltaY = math.abs((p.Y or 0) - lastY)
 			if deltaY > 4 then jumpFlag = true end
 		end
-
 		if jumpFlag then
 			task.wait(0.05)
 			h.Jump = true
@@ -184,15 +179,14 @@ local function replay(points)
 		h.MoveToFinished:Wait()
 		lastY = target.Y
 	end
-
 	replaying = false
 end
 
 local function playRecorded()
-	local buf={}
-	for _,seg in ipairs(redPlatforms)do
-		for _,mv in ipairs(seg.movements or {})do
-			table.insert(buf,mv.position)
+	local buf = {}
+	for _, seg in ipairs(redPlatforms) do
+		for _, mv in ipairs(seg.movements or {}) do
+			table.insert(buf, mv.position)
 		end
 	end
 	replay(buf)
@@ -203,7 +197,9 @@ local function playLoaded()
 end
 
 local function stopPlay()
-	shouldStop=true
+	shouldStop = true
+	replaying = false
+	Library:Notify("⛔ Playback stopped", 1)
 end
 
 ----------------------------------------------------------
@@ -244,7 +240,7 @@ MainBox:AddToggle("Noclip", {
 -- TAB AUTO WALK
 ----------------------------------------------------------
 local L = Tabs.Auto:AddLeftGroupbox("Record / Replay")
-local R = Tabs.Auto:AddRightGroupbox("Map Antartika")
+local R = Tabs.Auto:AddRightGroupbox("MAP ANTARTIKA")
 
 -- record features
 L:AddButton("Start Record", startRecording)
@@ -253,7 +249,7 @@ L:AddButton("Undo", undo)
 L:AddButton("Clear All", clearAll)
 L:AddDivider()
 L:AddButton("Play Recorded", playRecorded)
-L:AddButton("Stop", stopPlay)
+L:AddButton("⛔ Stop Play", stopPlay)
 L:AddButton("Save", function() save("MyRecordedPath") end)
 
 -- load and play
