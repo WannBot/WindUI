@@ -1,16 +1,18 @@
--- 🧊 WS Auto Walk FINAL FIX (Smooth + Jump + Stop)
--- Lightweight, tanpa visual, smooth replay, support jump (isJumping/isJump/jump)
--- Repo Path: https://raw.githubusercontent.com/WannBot/WindUI/refs/heads/main/PathX.json
+-- 🧊 WS Auto Walk FINAL (Auto Jump Fix + Stop Path)
+-- Ringan, tanpa visual, smooth, support isJumping, isJump, jump
 -- By WannBot x ChatGPT
 
 ----------------------------------------------------------
--- Library & Services
+-- Load UI Library
 ----------------------------------------------------------
 local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
 local Library = loadstring(game:HttpGet(repo.."Library.lua"))()
 local ThemeManager = loadstring(game:HttpGet(repo.."addons/ThemeManager.lua"))()
 local SaveManager = loadstring(game:HttpGet(repo.."addons/SaveManager.lua"))()
 
+----------------------------------------------------------
+-- Services
+----------------------------------------------------------
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
@@ -29,7 +31,7 @@ player.CharacterAdded:Connect(function(char)
 end)
 
 ----------------------------------------------------------
--- State & Global
+-- State & Variables
 ----------------------------------------------------------
 local recording, replaying, shouldStop = false, false, false
 local currentMovements, currentRed, lastYellow = {}, nil, nil
@@ -41,7 +43,7 @@ _G.__JumpPower = 50
 _G.__Noclip = false
 
 ----------------------------------------------------------
--- Movement Helper
+-- Movement Helpers
 ----------------------------------------------------------
 RunService.Stepped:Connect(function()
 	if _G.__Noclip and player.Character then
@@ -73,27 +75,27 @@ local function startRecording()
 		local pos = cf.p
 		if not currentRed then
 			currentRed = {X=pos.X, Y=pos.Y, Z=pos.Z}
-			table.insert(redPlatforms,{position=currentRed,movements=currentMovements})
+			table.insert(redPlatforms, {position=currentRed, movements=currentMovements})
 			return
 		end
-		table.insert(currentMovements,{position={X=pos.X,Y=pos.Y,Z=pos.Z}})
+		table.insert(currentMovements, {position={X=pos.X, Y=pos.Y, Z=pos.Z}})
 	end)
-	Library:Notify("Recording Started",1.5)
+	Library:Notify("Recording Started", 1.5)
 end
 
 local function stopRecording()
 	if not recording then return end
-	recording=false
+	recording = false
 	if clickConn then clickConn:Disconnect() end
-	local last=currentMovements[#currentMovements] and currentMovements[#currentMovements].position or currentRed
-	local yp={position={X=last.X,Y=last.Y,Z=last.Z}}
-	table.insert(yellowPlatforms,yp)
-	lastYellow=Vector3.new(yp.position.X,yp.position.Y,yp.position.Z)
-	Library:Notify("Recording Stopped",1.5)
+	local last = currentMovements[#currentMovements] and currentMovements[#currentMovements].position or currentRed
+	local yp = {position={X=last.X, Y=last.Y, Z=last.Z}}
+	table.insert(yellowPlatforms, yp)
+	lastYellow = Vector3.new(yp.position.X, yp.position.Y, yp.position.Z)
+	Library:Notify("Recording Stopped", 1.5)
 end
 
 local function undo()
-	if recording and #currentMovements>0 then
+	if recording and #currentMovements > 0 then
 		table.remove(currentMovements)
 	else
 		table.remove(redPlatforms)
@@ -102,47 +104,46 @@ local function undo()
 end
 
 local function clearAll()
-	redPlatforms,yellowPlatforms={},{}
+	redPlatforms, yellowPlatforms = {}, {}
 end
 
 ----------------------------------------------------------
--- Save / Load System
+-- Save / Load
 ----------------------------------------------------------
 local function buildObj()
-	return {redPlatforms=redPlatforms,yellowPlatforms=yellowPlatforms,mappings=mappings}
+	return {redPlatforms=redPlatforms, yellowPlatforms=yellowPlatforms, mappings=mappings}
 end
 
 local function save(name)
-	writefile((name or "MyRecordedPath")..".json",HttpService:JSONEncode(buildObj()))
-	Library:Notify("Saved",1)
+	writefile((name or "MyRecordedPath")..".json", HttpService:JSONEncode(buildObj()))
+	Library:Notify("Saved", 1)
 end
 
 local function loadJson(str)
-	local ok,data=pcall(function()return HttpService:JSONDecode(str)end)
+	local ok, data = pcall(function() return HttpService:JSONDecode(str) end)
 	if not ok then return false end
-	loadedObject=nil
+	loadedObject = nil
 	table.clear(loadedPoints)
 	if data.redPlatforms then
-		loadedObject=data
-		for _,seg in ipairs(data.redPlatforms)do
-			for _,mv in ipairs(seg.movements or {})do
-				if mv.position then table.insert(loadedPoints,mv.position) end
+		loadedObject = data
+		for _, seg in ipairs(data.redPlatforms) do
+			for _, mv in ipairs(seg.movements or {}) do
+				table.insert(loadedPoints, mv)
 			end
 		end
 	elseif data[1] and data[1].X then
-		for _,p in ipairs(data)do table.insert(loadedPoints,p) end
+		for _, p in ipairs(data) do table.insert(loadedPoints, p) end
 	else return false end
 	return true
 end
 
 ----------------------------------------------------------
--- REPLAY (smooth + jump + stop)
+-- Replay (smooth + detect isJumping)
 ----------------------------------------------------------
 local function compressPoints(points, minDist)
-	local filtered = {}
-	local last
+	local filtered, last = {}, nil
 	for _, p in ipairs(points) do
-		local pos = Vector3.new(p.X, p.Y, p.Z)
+		local pos = Vector3.new(p.position.X, p.position.Y, p.position.Z)
 		if not last or (pos - last).Magnitude > (minDist or 5) then
 			table.insert(filtered, p)
 			last = pos
@@ -151,24 +152,25 @@ local function compressPoints(points, minDist)
 	return filtered
 end
 
-local function replay(points)
-	if replaying or #points == 0 then return end
+local function replay(movements)
+	if replaying or #movements == 0 then return end
 	replaying, shouldStop = true, false
 	local h = player.Character:WaitForChild("Humanoid")
 	local lastY = hrp.Position.Y
-	local runPoints = compressPoints(points, 6)
+	local runPoints = compressPoints(movements, 6)
 
-	for _, p in ipairs(runPoints) do
+	for _, mv in ipairs(runPoints) do
 		if shouldStop then break end
-		local target = Vector3.new(p.X, p.Y, p.Z)
+		local pos = mv.position or mv
+		local target = Vector3.new(pos.X, pos.Y, pos.Z)
 		h:MoveTo(target)
 
-		-- 🟢 Deteksi loncat (isJump, isJumping, jump, atau beda tinggi)
+		-- 🔹 Deteksi loncat (isJumping/isJump/jump atau beda tinggi)
 		local jumpFlag = false
-		if p.isJump or p.jump or p.isJumping then
+		if mv.isJumping or mv.isJump or mv.jump then
 			jumpFlag = true
 		else
-			local deltaY = math.abs((p.Y or 0) - lastY)
+			local deltaY = math.abs((pos.Y or 0) - lastY)
 			if deltaY > 4 then jumpFlag = true end
 		end
 		if jumpFlag then
@@ -179,6 +181,7 @@ local function replay(points)
 		h.MoveToFinished:Wait()
 		lastY = target.Y
 	end
+
 	replaying = false
 end
 
@@ -186,7 +189,7 @@ local function playRecorded()
 	local buf = {}
 	for _, seg in ipairs(redPlatforms) do
 		for _, mv in ipairs(seg.movements or {}) do
-			table.insert(buf, mv.position)
+			table.insert(buf, mv)
 		end
 	end
 	replay(buf)
@@ -203,7 +206,7 @@ local function stopPlay()
 end
 
 ----------------------------------------------------------
--- UI Setup
+-- UI
 ----------------------------------------------------------
 local Window = Library:CreateWindow({
 	Title = "WS Auto Walk",
@@ -224,16 +227,16 @@ local MainBox = Tabs.Main:AddLeftGroupbox("Movement Settings")
 
 MainBox:AddSlider("WalkSpeed", {
 	Text = "WalkSpeed", Min = 10, Max = 100, Default = 16,
-	Callback = function(v) _G.__WalkSpeed=v; applyMovement() end
+	Callback = function(v) _G.__WalkSpeed = v; applyMovement() end
 })
 MainBox:AddSlider("JumpPower", {
 	Text = "JumpPower", Min = 25, Max = 200, Default = 50,
-	Callback = function(v) _G.__JumpPower=v; applyMovement() end
+	Callback = function(v) _G.__JumpPower = v; applyMovement() end
 })
 MainBox:AddToggle("Noclip", {
 	Text = "NoClip",
 	Default = false,
-	Callback = function(v) _G.__Noclip=v end
+	Callback = function(v) _G.__Noclip = v end
 })
 
 ----------------------------------------------------------
@@ -242,7 +245,6 @@ MainBox:AddToggle("Noclip", {
 local L = Tabs.Auto:AddLeftGroupbox("Record / Replay")
 local R = Tabs.Auto:AddRightGroupbox("MAP ANTARTIKA")
 
--- record features
 L:AddButton("Start Record", startRecording)
 L:AddButton("Stop Record", stopRecording)
 L:AddButton("Undo", undo)
@@ -252,19 +254,20 @@ L:AddButton("Play Recorded", playRecorded)
 L:AddButton("⛔ Stop Play", stopPlay)
 L:AddButton("Save", function() save("MyRecordedPath") end)
 
--- load and play
+----------------------------------------------------------
+-- Path Buttons
+----------------------------------------------------------
 local baseURL = "https://raw.githubusercontent.com/WannBot/WindUI/refs/heads/main/"
 
 local function loadAndPlay(path)
-	local ok,res = pcall(function() return game:HttpGet(baseURL..path) end)
+	local ok, res = pcall(function() return game:HttpGet(baseURL .. path) end)
 	if ok and res and loadJson(res) then
 		playLoaded()
 	else
-		Library:Notify("Load failed: "..path,2)
+		Library:Notify("Load failed: " .. path, 2)
 	end
 end
 
--- play single path buttons
 R:AddButton("BC > CP1 (Path1)", function() loadAndPlay("Path1.json") end)
 R:AddButton("CP1 > CP2 (Path2)", function() loadAndPlay("Path2.json") end)
 R:AddButton("CP2 > CP3 (Path3)", function() loadAndPlay("Path3.json") end)
@@ -273,20 +276,25 @@ R:AddButton("CP4 > FINISH (Path5)", function() loadAndPlay("Path5.json") end)
 R:AddDivider()
 R:AddButton("PLAY ALL (Path1–5)", function()
 	task.spawn(function()
-		for i=1,5 do
-			local ok,res = pcall(function()
-				return game:HttpGet(baseURL.."Path"..i..".json")
+		for i = 1, 5 do
+			local ok, res = pcall(function()
+				return game:HttpGet(baseURL .. "Path" .. i .. ".json")
 			end)
 			if ok and res and loadJson(res) then
 				playLoaded()
 				if shouldStop then break end
 				task.wait(0.5)
 			else
-				Library:Notify("Fail Path"..i,2)
+				Library:Notify("Fail Path" .. i, 2)
 				break
 			end
 		end
 	end)
+end)
+
+-- 🟥 Stop button di bawah Play All
+R:AddButton("⛔ Stop Play (All Path)", function()
+	stopPlay()
 end)
 
 ----------------------------------------------------------
