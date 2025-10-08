@@ -119,21 +119,39 @@ local function save(name)
 	Library:Notify("Saved", 1)
 end
 
+----------------------------------------------------------
+-- FIX LOAD JSON (Simpan isJumping & data lengkap)
+----------------------------------------------------------
 local function loadJson(str)
-	local ok, data = pcall(function() return HttpService:JSONDecode(str) end)
-	if not ok then return false end
-	loadedObject = nil
+	local ok, data = pcall(function()
+		return HttpService:JSONDecode(str)
+	end)
+	if not ok then
+		Library:Notify("❌ JSON error", 2)
+		return false
+	end
+
 	table.clear(loadedPoints)
+
+	-- Jika format record punya redPlatforms
 	if data.redPlatforms then
-		loadedObject = data
 		for _, seg in ipairs(data.redPlatforms) do
 			for _, mv in ipairs(seg.movements or {}) do
-				table.insert(loadedPoints, mv)
+				table.insert(loadedPoints, mv) -- ⬅️ simpan semua, bukan hanya mv.position
 			end
 		end
-	elseif data[1] and data[1].X then
-		for _, p in ipairs(data) do table.insert(loadedPoints, p) end
-	else return false end
+
+	-- Jika format langsung list posisi + isJumping
+	elseif typeof(data) == "table" and data[1] then
+		for _, p in ipairs(data) do
+			table.insert(loadedPoints, p)
+		end
+	else
+		Library:Notify("⚠️ Unsupported JSON format", 2)
+		return false
+	end
+
+	Library:Notify("✅ Loaded " .. tostring(#loadedPoints) .. " points", 1.5)
 	return true
 end
 
