@@ -138,20 +138,54 @@ end
 ----------------------------------------------------------
 -- Replay System
 ----------------------------------------------------------
-local function replay(points)
-	if replaying or #points==0 then return end
-	replaying,shouldStop=true,false
-	local h=player.Character:WaitForChild("Humanoid")
-	for i,p in ipairs(points)do
-		if shouldStop then break end
-		h:MoveTo(Vector3.new(p.X,p.Y,p.Z))
-		if p.isJump or p.jump then
-			task.wait(0.05)
-			h.Jump=true
+----------------------------------------------------------
+-- REPLAY (halus + auto jump detection)
+----------------------------------------------------------
+local function compressPoints(points, minDist)
+	local filtered = {}
+	local last
+	for _, p in ipairs(points) do
+		local pos = Vector3.new(p.X, p.Y, p.Z)
+		if not last or (pos - last).Magnitude > (minDist or 5) then
+			table.insert(filtered, p)
+			last = pos
 		end
-		h.MoveToFinished:Wait()
 	end
-	replaying=false
+	return filtered
+end
+
+local function replay(points)
+	if replaying or #points == 0 then return end
+	replaying, shouldStop = true, false
+	local h = player.Character:WaitForChild("Humanoid")
+	local lastY = hrp.Position.Y
+
+	local runPoints = compressPoints(points, 6) -- skip titik rapat
+
+	for i, p in ipairs(runPoints) do
+		if shouldStop then break end
+		local target = Vector3.new(p.X, p.Y, p.Z)
+		h:MoveTo(target)
+
+		-- ✨ Deteksi loncat otomatis:
+		local jumpFlag = false
+		if p.isJump or p.jump then
+			jumpFlag = true
+		else
+			local deltaY = math.abs((p.Y or 0) - lastY)
+			if deltaY > 4 then jumpFlag = true end
+		end
+
+		if jumpFlag then
+			task.wait(0.05)
+			h.Jump = true
+		end
+
+		h.MoveToFinished:Wait()
+		lastY = target.Y
+	end
+
+	replaying = false
 end
 
 local function playRecorded()
