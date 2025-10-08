@@ -120,99 +120,105 @@ local function save(name)
 end
 
 ----------------------------------------------------------
--- FIX LOAD JSON (Simpan isJumping & data lengkap)
+-- LOAD JSON FIX (simpan isJumping, bukan hanya posisi)
 ----------------------------------------------------------
 local function loadJson(str)
 	local ok, data = pcall(function()
 		return HttpService:JSONDecode(str)
 	end)
 	if not ok then
-		Library:Notify("❌ JSON error", 2)
+		Library:Notify("❌ Gagal baca JSON", 2)
 		return false
 	end
 
 	table.clear(loadedPoints)
 
-	-- Jika format record punya redPlatforms
+	-- Format hasil record (ada redPlatforms)
 	if data.redPlatforms then
 		for _, seg in ipairs(data.redPlatforms) do
 			for _, mv in ipairs(seg.movements or {}) do
-				table.insert(loadedPoints, mv) -- ⬅️ simpan semua, bukan hanya mv.position
+				-- Simpan seluruh object movement, bukan hanya posisi
+				table.insert(loadedPoints, mv)
 			end
 		end
 
-	-- Jika format langsung list posisi + isJumping
-	elseif typeof(data) == "table" and data[1] then
+	-- Format file path eksternal (seperti CP0-1.json)
+	elseif typeof(data) == "table" and data[1] and data[1].position then
+		for _, mv in ipairs(data) do
+			table.insert(loadedPoints, mv)
+		end
+
+	-- Format minimal {X,Y,Z}
+	elseif typeof(data) == "table" and data[1] and data[1].X then
 		for _, p in ipairs(data) do
-			table.insert(loadedPoints, p)
+			table.insert(loadedPoints, {position = p})
 		end
 	else
-		Library:Notify("⚠️ Unsupported JSON format", 2)
+		Library:Notify("⚠️ Format JSON tidak dikenali", 2)
 		return false
 	end
 
-	Library:Notify("✅ Loaded " .. tostring(#loadedPoints) .. " points", 1.5)
+	Library:Notify("✅ Loaded " .. tostring(#loadedPoints) .. " titik", 1.2)
 	return true
 end
 
 ----------------------------------------------------------
--- Replay (smooth + detect isJumping)
+-- REPLAY ULTIMATE FIX (Force Jump + Auto Jumping)
 ----------------------------------------------------------
-----------------------------------------------------------
--- REPLAY UNIVERSAL (Fix isJumping semua format)
-----------------------------------------------------------
-local function compressPoints(points, minDist)
-	local filtered, last = {}, nil
-	for _, p in ipairs(points) do
-		local pos
-		if p.position then
-			pos = Vector3.new(p.position.X, p.position.Y, p.position.Z)
-		else
-			pos = Vector3.new(p.X, p.Y, p.Z)
-		end
-		if not last or (pos - last).Magnitude > (minDist or 5) then
-			table.insert(filtered, p)
-			last = pos
-		end
-	end
-	return filtered
-end
-
 local function replay(points)
 	if replaying or #points == 0 then return end
 	replaying, shouldStop = true, false
 	local h = player.Character:WaitForChild("Humanoid")
+	local hrp = player.Character:WaitForChild("HumanoidRootPart")
 	local lastY = hrp.Position.Y
+
+	-- skip titik rapat
+	local function compressPoints(points, minDist)
+		local filtered, last = {}, nil
+		for _, p in ipairs(points) do
+			local pos = p.position or p
+			local vec = Vector3.new(pos.X, pos.Y, pos.Z)
+			if not last or (vec - last).Magnitude > (minDist or 5) then
+				table.insert(filtered, p)
+				last = vec
+			end
+		end
+		return filtered
+	end
 
 	local runPoints = compressPoints(points, 6)
 
 	for _, mv in ipairs(runPoints) do
 		if shouldStop then break end
-
-		-- deteksi posisi universal
 		local pos = mv.position or mv
 		local target = Vector3.new(pos.X, pos.Y, pos.Z)
-		h:MoveTo(target)
 
-		-- 🟢 Deteksi loncat di semua format
-		local jumpFlag = false
-		if mv.isJumping or mv.isJump or mv.jump or (pos.isJumping or pos.isJump or pos.jump) then
-			jumpFlag = true
-		else
-			local deltaY = math.abs((pos.Y or 0) - lastY)
-			if deltaY > 4 then jumpFlag = true end
-		end
+		-- deteksi jump flag
+		local jumpFlag = mv.isJumping or mv.isJump or mv.jump
+			or (pos.isJumping or pos.isJump or pos.jump)
 
+		local deltaY = math.abs((pos.Y or 0) - lastY)
+		if deltaY > 4 then jumpFlag = true end
+
+		-- kalau butuh loncat, lompat dulu sebelum jalan
 		if jumpFlag then
 			task.wait(0.05)
+			if hrp and hrp.Parent then
+				-- gunakan ApplyJumpImpulse agar loncat pasti terjadi
+				local rootVel = hrp.AssemblyLinearVelocity
+				hrp:ApplyImpulse(Vector3.new(0, h.JumpPower * 2.5, 0))
+			end
 			h.Jump = true
+			task.wait(0.15)
 		end
 
+		h:MoveTo(target)
 		h.MoveToFinished:Wait()
 		lastY = target.Y
 	end
 
 	replaying = false
+	Library:Notify("✅ Replay Finished", 1.2)
 end
 
 local function playRecorded()
