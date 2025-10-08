@@ -163,7 +163,7 @@ local function loadJson(str)
 end
 
 ----------------------------------------------------------
--- REPLAY ANTI-SPAM JUMP (Stable Flight Fix)
+-- REPLAY STRICT (Hanya loncat jika isJumping=true di JSON)
 ----------------------------------------------------------
 local function replay(points)
 	if replaying or #points == 0 then return end
@@ -171,9 +171,6 @@ local function replay(points)
 
 	local h = player.Character:WaitForChild("Humanoid")
 	local hrp = player.Character:WaitForChild("HumanoidRootPart")
-	local lastY = hrp.Position.Y
-	local lastJump = 0
-	local jumpCooldown = 0.8 -- detik
 
 	-- skip titik rapat biar halus
 	local function compress(points, minDist)
@@ -197,25 +194,16 @@ local function replay(points)
 		local pos = mv.position or mv
 		local target = Vector3.new(pos.X, pos.Y, pos.Z)
 
-		-- deteksi flag loncat
-		local jumpFlag = mv.isJumping or mv.isJump or mv.jump or
-			(pos.isJumping or pos.isJump or pos.jump)
-
-		local deltaY = math.abs((pos.Y or 0) - lastY)
-		if deltaY > 4 then jumpFlag = true end
-
-		-- 💥 Loncat hanya jika cooldown lewat
-		if jumpFlag and (tick() - lastJump > jumpCooldown) then
+		-- 💥 Loncat hanya jika JSON menandai titik ini sebagai jump
+		if mv.isJumping or mv.isJump or mv.jump or (pos.isJumping or pos.isJump or pos.jump) then
 			task.spawn(function()
 				h:ChangeState(Enum.HumanoidStateType.Jumping)
 			end)
-			lastJump = tick()
-			task.wait(0.15)
+			task.wait(0.1)
 		end
 
 		h:MoveTo(target)
 		h.MoveToFinished:Wait()
-		lastY = target.Y
 	end
 
 	replaying = false
